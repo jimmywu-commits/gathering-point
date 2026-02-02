@@ -1,0 +1,1316 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>蝦拼集點換好禮 BN v1</title>
+<style>
+@font-face{
+  font-family:'ShopeeNotoSansRegular';
+  src:url('fonts/ShopeeNotoSans(content)-Regular.ttf') format('truetype');
+  font-weight:400;
+  font-style:normal;
+  font-display:swap;
+}
+@font-face{
+  font-family:'ShopeeNotoSansMedium';
+  src:url('fonts/ShopeeNotoSans(content)-Medium.ttf') format('truetype');
+  font-weight:500;
+  font-style:normal;
+  font-display:swap;
+}
+@font-face{
+  font-family:'ShopeeNotoSansRegular';
+  src:url('fonts/ShopeeNotoSans(content)-Regular.ttf') format('truetype');
+  font-weight:400;
+  font-style:normal;
+  font-display:swap;
+}
+@font-face{
+  font-family:'ShopeeNotoSansRegular';
+  src:url('fonts/ShopeeNotoSans(content)-Medium.ttf') format('truetype');
+  font-weight:500;
+  font-style:normal;
+  font-display:swap;
+}
+:root{font-family:'ShopeeNotoSansRegular', system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial;}
+body{margin:0;background:#f2f2f2;padding:20px;display:flex;flex-direction:column;align-items:center;color:#111;}
+.toolbar{width:100%;max-width:980px;display:flex;gap:8px;align-items:center;padding:8px 12px;box-sizing:border-box;}
+.toolbar button{padding:8px 12px;border:1px solid #ccc;background:#fff;border-radius:6px;cursor:pointer;}
+.toolbar .spacer{flex:1}
+#status{font-size:13px;color:#333}
+
+/* ===== Board (578x600) ===== */
+.board-wrap{width:578px;max-width:calc(100vw - 40px);}
+.board{
+  width:578px;height:600px;
+  background:#ee4d2d;
+  border-radius:44px;
+  position:relative;
+  overflow:visible;
+}
+.board-inner{
+  position:absolute; inset:0;
+  padding:56px 42px 29px 42px; /* derived from reference */
+  box-sizing:border-box;
+  display:grid;
+  column-gap:7px;
+  row-gap:47px;
+  align-content:start;
+}
+/* default 3 columns; JS will switch to 2 when needed */
+.board-inner.cols-3{grid-template-columns:repeat(3,160px);}
+.board-inner.cols-2{grid-template-columns:repeat(2,160px); justify-content:center; column-gap:14px;}
+
+/* ===== Card ===== */
+.card{width:160px;height:234px;position:relative;
+  z-index:1;}
+.card-bg{
+  position:absolute; inset:0;
+  background:#ffdf7f;
+  border-radius:26px;
+}
+.card-bg{z-index:0;}
+.date-pill{
+  position:absolute;
+  top:-34px; left:14px;
+  width:133px; height:53px;
+  background:#143B76;
+  border-radius:999px;
+  display:flex; align-items:center; justify-content:center;
+  color:#fff;
+  font-family:'ShopeeNotoSansMedium';
+  font-weight:500;
+  font-size:30px;
+  letter-spacing:0.5px;
+}
+.circle{
+  position:absolute;
+  left:15px; top:48px;
+  width:130px; height:130px;
+  border-radius:50%;
+  background:#ff7044;
+  display:flex; align-items:center; justify-content:center;
+  overflow:visible;
+}
+.circle img{
+  position:absolute;
+  user-select:none;
+  -webkit-user-drag:none;
+  cursor:ew-resize;
+  border-radius:0;
+}
+/* prevent context menu inside circle */
+.circle{touch-action:none;}
+.circle, .circle * { -webkit-tap-highlight-color: transparent; }
+
+
+/* ===== Ribbon as base64 image ===== */
+
+
+
+/* ===== Ribbon (image as separate layer, v38) ===== */
+.ribbon-bg{
+  position:absolute;
+  left:20px; right:20px;
+  bottom:30px;
+  /* 不限制在 ribbon 文字框內：圖片本身維持原尺寸，不縮放 */
+  width:auto;
+  height:auto;
+  pointer-events:none;
+  z-index:2; /* above card-bg */
+  display:flex;
+  justify-content:center;
+}
+.ribbon-bg img{
+  display:block;
+  width:auto;
+  height:auto;
+  max-width:none;
+  max-height:none;
+}
+.ribbon{
+  position:absolute;
+  left:20px; right:20px;
+  bottom:34px;
+  min-height:52px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:6px 12px;
+  box-sizing:border-box;
+  background:none;
+  z-index:3; /* above ribbon-bg */
+}
+/* v39: 文字編輯區獨立出來，避免 contenteditable + flex 造成 Enter 斷行怪異 */
+.ribbon-text{
+  color:#fff;
+  font-family:'ShopeeNotoSansRegular';
+  font-weight:400;
+  font-size:18px;
+  line-height:1.12;
+  text-align:center;
+  white-space:pre-wrap;     /* 保留 Enter 換行 */
+  overflow-wrap:break-word; /* 長字自動換行 */
+  word-break:break-word;
+  outline:none;
+  width:100%;
+}
+.ribbon::before,.ribbon::after{content:none !important; display:none !important;}
+.ribbon::before,.ribbon::after{
+  content:"";
+  position:absolute;
+  top:18px;
+  width:22px; height:16px;
+  background:#9E1217;
+}
+.ribbon::before{left:-18px; clip-path:polygon(100% 0, 0 50%, 100% 100%);}
+.ribbon::after{right:-18px; clip-path:polygon(0 0, 100% 50%, 0 100%);}
+
+.icon-btn{
+  position:absolute; top:8px;
+  width:26px;height:26px;border-radius:6px;
+  background:rgba(255,255,255,0.92);
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 1px 2px rgba(0,0,0,0.12);
+  cursor:pointer;
+  border:1px solid rgba(0,0,0,0.06);
+  z-index:20;
+  font-size:14px; line-height:1;
+}
+.icon-replace{left:8px;}
+.icon-edit{right:8px;}
+.filename{
+  margin-top:6px;
+  font-size:7px;
+  color:#777;
+  width:160px;
+  text-align:center;
+  white-space:nowrap;
+  overflow:visible;
+  text-overflow:ellipsis;
+}
+
+/* ===== Toast ===== */
+.toast{position:fixed;right:16px;top:16px;z-index:99999;background:#111;color:#fff;font-size:12px;padding:8px 10px;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.3);opacity:.98;max-width:68ch;display:none}
+.toast.ok{background:#16a34a}
+.toast.err{background:#dc2626}
+
+/* ===== Editor Modal ===== */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:9998;}
+.modal.show{display:flex;}
+.modal-panel{background:#111;border-radius:12px;padding:12px;box-shadow:0 10px 30px rgba(0,0,0,.5);color:#fff;display:flex;flex-direction:column;gap:8px;min-width:min(920px, calc(100vw - 24px));max-width:calc(100vw - 24px)}
+.modal-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:14px}
+.modal-toolbar label{font-size:12px}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;align-items:center}
+.modal-actions button{border:0;border-radius:8px;padding:6px 10px;cursor:pointer}
+.btn-primary{background:#2ecc71;color:#111}
+.btn-danger{background:#e74c3c;color:#fff}
+.btn-ghost{background:#444;color:#fff}
+.checkerboard{position:relative;display:inline-block;border-radius:8px;overflow:auto;background: conic-gradient(#ccc 25%, #fff 0 50%, #ccc 0 75%, #fff 0) 0 0/20px 20px;padding:0;max-width:100%;max-height:70vh}
+#eraseCanvas{display:block;background:transparent;max-width:100%;height:auto}
+
+.nudge{position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:9999; background:rgba(0,0,0,.55);}
+.nudge.show{display:flex;}
+.nudge-box{position:relative; width:300px; height:200px; background:#0000; border-radius:10px; overflow:visible;}
+.nudge-box img{width:100%; height:100%; object-fit:cover; cursor:pointer; display:block;}
+.nudge-close{position:absolute; right:6px; top:6px; width:28px; height:28px; border-radius:999px; background:#111; color:#fff; border:0; cursor:pointer; font-size:16px; line-height:28px; text-align:center;}
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <button id="btnUploadSheet">上傳工單</button>
+  <input id="sheetInput" type="file" accept=".xlsx,.xls" style="display:none">
+
+  <button id="btnUploadImages">上傳圖片</button>
+  <input id="imgInput" type="file" webkitdirectory multiple accept="image/*" style="display:none">
+
+  <button id="btnDownloadPNG">下載圖片 (578x600 PNG)</button>
+
+  <button id="btnDownloadTemp">下載暫存檔</button>
+  <button id="btnUploadTemp">上傳暫存檔</button>
+  <input id="tempInput" type="file" accept="application/json" style="display:none">
+
+  <div class="spacer"></div>
+  <div id="status">狀態：就緒</div>
+</div>
+
+<div class="board-wrap">
+  <div class="board" id="board">
+    <div class="board-inner cols-3" id="boardInner"></div>
+  </div>
+</div>
+
+<!-- Editor Modal -->
+<div class="modal" id="eraseModal" aria-hidden="true">
+  <div class="modal-panel">
+    <div class="modal-toolbar">
+      <label><input type="radio" name="mode" value="erase" checked> 擦除</label>
+      <label><input type="radio" name="mode" value="select"> 智慧選取</label>
+      <label><input type="radio" name="mode" value="crop"> 裁切</label>
+      <label>筆刷：<input id="brushSize" type="range" min="5" max="120" value="40"></label>
+      <label>容差：<input id="tolerance" type="range" min="0" max="80" value="20"></label>
+      <span style="opacity:.8;font-size:12px">裁切：拖曳框選；智慧選取：點擊；擦除：拖曳</span>
+    </div>
+    <div class="checkerboard">
+      <canvas id="eraseCanvas" width="800" height="400"></canvas>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-ghost" id="eraseReset" type="button">重作</button>
+      <button class="btn-primary" id="cropConfirm" type="button">確定裁切</button>
+      <button class="btn-primary" id="eraseApply" type="button">完成</button>
+      <button class="btn-danger" id="eraseCancel" type="button">取消</button>
+    </div>
+  </div>
+</div>
+
+<div class="nudge" id="cancelNudge" aria-hidden="true">
+  <div class="nudge-box">
+    <button class="nudge-close" id="nudgeClose" aria-label="關閉">✖</button>
+    <img id="nudgeImg" alt="跳出提示"
+      src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='400'%3E%3Crect width='600' height='400' fill='%23111'/%3E%3Ctext x='50%25' y='45%25' dominant-baseline='middle' text-anchor='middle' fill='%23fff' font-size='20'%3E已取消編輯%3C/text%3E%3Ctext x='50%25' y='58%25' dominant-baseline='middle' text-anchor='middle' fill='%23bbb' font-size='14'%3E點此可開啟線上去背工具%3C/text%3E%3C/svg%3E" />
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<!-- SheetJS for xlsx parsing -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+<script>
+/* ========= State ========= */
+const boardInner = document.getElementById('boardInner');
+const statusEl = document.getElementById('status');
+
+let items = []; // {date, name, imageDataURL, x,y,width,height, fileName}
+const MASK = 130;
+const RIBBON_DATA_URL = 'data:image/png;base64,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'; // v41: avoid tainted canvas export
+
+
+/* ========= UI helpers ========= */
+function updateStatus(t){ statusEl.textContent = '狀態：' + t; }
+function showToast(msg, type='ok', ms=1600){
+  const t=document.getElementById('toast');
+  t.textContent=msg;
+  t.className='toast ' + (type==='ok'?'ok':'err');
+  t.style.display='block';
+  clearTimeout(showToast._tid);
+  showToast._tid=setTimeout(()=>{ t.style.display='none'; }, ms);
+}
+function sanitizeFilename(name){
+  return (name||'image').replace(/[\/\\?%*:|"<>]/g,'_');
+}
+function normalizeKey(s){
+  return (s||'').toLowerCase().replace(/\.[a-z0-9]+$/i,'').replace(/[^a-z0-9\u4e00-\u9fff]+/gi,'');
+}
+
+/* ========= Render ========= */
+function ensureDefaultItems(){
+  if(items.length) return;
+  // 6 placeholders
+  items = Array.from({length:6}, (_,i)=>({date:'', name:'', matchKey:'', imageDataURL:'', x:0,y:0,width:0,height:0, fileName:''}));
+}
+ensureDefaultItems();
+render();
+
+function computeCols(n){
+  return (n===4) ? 2 : 3;
+}
+
+function render(){
+  const n = items.length;
+  const cols = computeCols(n);
+  boardInner.classList.toggle('cols-2', cols===2);
+  boardInner.classList.toggle('cols-3', cols===3);
+
+  boardInner.innerHTML = '';
+  items.forEach((it, idx)=>{
+    const card = document.createElement('div');
+    card.className='card';
+    card.dataset.index = idx;
+
+    const bg = document.createElement('div');
+    bg.className='card-bg';
+    card.appendChild(bg);
+
+    const pill = document.createElement('div');
+    pill.className='date-pill';
+    pill.textContent = it.date || '';
+    card.appendChild(pill);
+
+    const replaceBtn = document.createElement('div');
+    replaceBtn.className='icon-btn icon-replace';
+    replaceBtn.title='更換圖片';
+    replaceBtn.textContent='⟳';
+    card.appendChild(replaceBtn);
+
+    const editBtn = document.createElement('div');
+    editBtn.className='icon-btn icon-edit';
+    editBtn.title='修改（去背/裁切）';
+    editBtn.textContent='✎';
+    card.appendChild(editBtn);
+
+    const circle = document.createElement('div');
+    circle.className='circle';
+    circle.addEventListener('contextmenu', e=>e.preventDefault());
+    card.appendChild(circle);
+
+    const ribbonBg = document.createElement('div');
+    ribbonBg.className = 'ribbon-bg';
+    const ribImg = document.createElement('img');
+    ribImg.src = 'img/緞帶.png';
+    ribImg.alt = 'ribbon';
+    ribbonBg.appendChild(ribImg);
+    card.appendChild(ribbonBg);
+
+    const ribbon = document.createElement('div');
+    ribbon.className = 'ribbon';
+
+    const ribbonText = document.createElement('div');
+    ribbonText.className = 'ribbon-text';
+    ribbonText.contentEditable = 'true';
+    ribbonText.spellcheck = false;
+    ribbonText.dataset.index = String(idx);
+
+    // v39: 純文字欄位，顯示與編輯一致，Enter 就是正常換行
+    ribbonText.innerText = it.name || '';
+
+    ribbonText.addEventListener('input', ()=>{
+      items[idx].name = ribbonText.innerText || '';
+    });
+
+    ribbon.appendChild(ribbonText);
+    card.appendChild(ribbon);
+
+    const filename = document.createElement('div');
+    filename.className='filename';
+    filename.textContent = it.fileName || '';
+    card.appendChild(filename);
+
+    // place image if any
+    if(it.imageDataURL){
+      const img = new Image();
+      img.src = it.imageDataURL;
+      img.draggable=false;
+      img.dataset.index = idx;
+      img.dataset.name = it.fileName || '';
+      img.onload = ()=>{
+        // if no size stored, auto-fit to MASK
+        if(!it.width || !it.height){
+          const scale = Math.min(MASK/img.naturalWidth, MASK/img.naturalHeight, 1)* 1.2;
+          const w = Math.round(img.naturalWidth*scale);
+          const h = Math.round(img.naturalHeight*scale);
+          const left = Math.round((MASK - w)/2);
+          const top  = Math.round((MASK - h)/2 - MASK*0.10);
+          it.width=w; it.height=h; it.x=left; it.y=top;
+        }
+        applyImgStyle(img, it.x, it.y, it.width, it.height);
+        setupInteractions(img, idx);
+      };
+      circle.appendChild(img);
+    }
+
+    // replace: single image picker (NOT folder)
+    replaceBtn.addEventListener('click', e=>{
+      e.stopPropagation();
+      const inp=document.createElement('input');
+      inp.type='file';
+      inp.accept='image/*';
+      inp.multiple=false;
+      inp.onchange=()=>{
+        const f=inp.files[0];
+        if(!f) return;
+        const r=new FileReader();
+        r.onload=async ev=>{
+          const cleaned = await removeWhiteBackground(ev.target.result);
+          setItemImage(idx, cleaned, f.name, true);
+        };
+        r.readAsDataURL(f);
+      };
+      inp.click();
+    });
+
+    // edit: open editor if img exists
+    editBtn.addEventListener('click', e=>{
+      e.stopPropagation();
+      const img = circle.querySelector('img');
+      if(!img){ showToast('此格尚未有圖片','err'); return; }
+      openEraseEditor(img);
+    });
+
+    boardInner.appendChild(card);
+  });
+}
+
+/* ========= Image placement & interactions ========= */
+function applyImgStyle(img, left, top, w, h){
+  img.style.position='absolute';
+  img.style.left = left+'px';
+  img.style.top  = top+'px';
+  img.style.width  = w+'px';
+  img.style.height = h+'px';
+  img.dataset.left = left;
+  img.dataset.top  = top;
+  img.dataset.width  = w;
+  img.dataset.height = h;
+  img.style.cursor='ew-resize';
+}
+
+function setItemImage(idx, dataURL, fileName, autoFit){
+  const it = items[idx];
+  it.imageDataURL = dataURL;
+  it.fileName = fileName || it.fileName || '';
+  // reset geometry then auto-fit
+  it.x=0; it.y=0; it.width=0; it.height=0;
+  // rerender then auto-fit on image load
+  render();
+  showToast('已更新圖片','ok');
+}
+
+function setupInteractions(img, idx){
+  // left-drag zoom (center), right-drag pan
+  img.addEventListener('contextmenu', e=>e.preventDefault());
+
+  // zoom
+  let zooming=false, startX=0, origW=0, origH=0, origLeft=0, origTop=0;
+  img.addEventListener('mousedown', e=>{
+    if(e.button===0){
+      e.preventDefault();
+      zooming=true;
+      startX=e.clientX;
+      origW=parseFloat(img.dataset.width); origH=parseFloat(img.dataset.height);
+      origLeft=parseFloat(img.dataset.left); origTop=parseFloat(img.dataset.top);
+      window.addEventListener('mousemove', onZoom);
+      window.addEventListener('mouseup', endZoom);
+    }else if(e.button===2){
+      e.preventDefault();
+      startPan(e);
+    }
+  });
+
+  function onZoom(e){
+    if(!zooming) return;
+    const dx=e.clientX-startX;
+    const factor=1+dx/200;
+    let newW=Math.max(10, Math.round(origW*factor));
+    let newH=Math.max(10, Math.round(origH*factor));
+
+    const centerX=origLeft + origW/2;
+    const centerY=origTop + origH/2;
+    const newLeft=Math.round(centerX - newW/2);
+    const newTop=Math.round(centerY - newH/2);
+
+    applyImgStyle(img, newLeft, newTop, newW, newH);
+    items[idx].x=newLeft; items[idx].y=newTop; items[idx].width=newW; items[idx].height=newH;
+  }
+  function endZoom(){
+    zooming=false;
+    window.removeEventListener('mousemove', onZoom);
+    window.removeEventListener('mouseup', endZoom);
+  }
+
+  // pan
+  let panning=false, panStartX=0, panStartY=0, panOrigLeft=0, panOrigTop=0;
+  function startPan(e){
+    panning=true;
+    panStartX=e.clientX; panStartY=e.clientY;
+    panOrigLeft=parseFloat(img.dataset.left)||0;
+    panOrigTop=parseFloat(img.dataset.top)||0;
+    img.style.cursor='grabbing';
+    window.addEventListener('mousemove', onPan);
+    window.addEventListener('mouseup', endPan);
+    window.addEventListener('contextmenu', preventContext, true);
+  }
+  function onPan(e){
+    if(!panning) return;
+    const dx=e.clientX-panStartX;
+    const dy=e.clientY-panStartY;
+    const newLeft=Math.round(panOrigLeft+dx);
+    const newTop=Math.round(panOrigTop+dy);
+    img.style.left=newLeft+'px'; img.style.top=newTop+'px';
+    img.dataset.left=newLeft; img.dataset.top=newTop;
+    items[idx].x=newLeft; items[idx].y=newTop;
+  }
+  function endPan(){
+    panning=false;
+    img.style.cursor='ew-resize';
+    window.removeEventListener('mousemove', onPan);
+    window.removeEventListener('mouseup', endPan);
+    window.removeEventListener('contextmenu', preventContext, true);
+  }
+  function preventContext(e){ e.preventDefault(); }
+}
+
+/* ========= Upload images (folder) & fuzzy match ========= */
+const btnUploadImages = document.getElementById('btnUploadImages');
+const imgInput = document.getElementById('imgInput');
+
+btnUploadImages.addEventListener('click', ()=> imgInput.click());
+imgInput.addEventListener('change', async e=>{
+  const files = Array.from(e.target.files||[]).filter(f=>f.type && f.type.startsWith('image/'));
+  if(!files.length){ showToast('沒有選到圖片','err'); return; }
+  updateStatus('上傳圖片中('+files.length+'張)');
+  files.sort((a,b)=> (a.webkitRelativePath||a.name).localeCompare(b.webkitRelativePath||b.name));
+
+  // build candidate name keys
+    const itemKeys = items.map((it,i)=>({
+    i,
+    // v23: 以 J欄對應檔名為優先比對依據（可能含日期前綴）
+    matchKey: normalizeKey(it.matchKey||''),
+    nameKey: normalizeKey(it.name||'')
+  }));
+
+  // match each file to best item by overlap score
+  for(const f of files){
+    const fk = normalizeKey(f.name);
+    let best = {score: -1, idx: -1};
+
+    for(const it of itemKeys){
+      const mk = it.matchKey;
+      if(mk){
+        // 部分比對：任一方包含另一方
+        const hit = (fk.includes(mk) || mk.includes(fk));
+        if(hit){
+          const score = Math.min(fk.length, mk.length); // longer match wins
+          if(score > best.score) best = {score, idx: it.i};
+          continue;
+        }
+        // 次要：用 overlapScore 做寬鬆比對（避免 J 欄含日期前綴）
+        const score2 = overlapScore(mk, fk);
+        if(score2 > best.score) best = {score: score2, idx: it.i};
+      }else if(it.nameKey){
+        const score3 = overlapScore(it.nameKey, fk);
+        if(score3 > best.score) best = {score: score3, idx: it.i};
+      }
+    }
+
+    // if no good match, put into first empty slot
+    let targetIdx = (best.score>=2) ? best.idx : items.findIndex(x=>!x.imageDataURL);
+
+    if(targetIdx < 0) targetIdx = 0;
+
+    await new Promise(res=>{
+      const r=new FileReader();
+      r.onload=async ev=>{ const cleaned = await removeWhiteBackground(ev.target.result); setItemImage(targetIdx, cleaned, f.name, true); res(); };
+      r.readAsDataURL(f);
+    });
+  }
+  updateStatus('圖片已上傳');
+  showToast('圖片已套用（可再手動更換/編輯）','ok',1800);
+  imgInput.value='';
+});
+
+function overlapScore(a,b){
+  if(!a || !b) return 0;
+  // quick: count common chars in order (LCS-ish greedy)
+  let i=0,j=0,score=0;
+  while(i<a.length && j<b.length){
+    if(a[i]===b[j]){ score++; i++; j++; }
+    else{
+      j++;
+    }
+  }
+  return score;
+}
+
+/* ========= Upload sheet (xlsx) ========= */
+const btnUploadSheet = document.getElementById('btnUploadSheet');
+const sheetInput = document.getElementById('sheetInput');
+
+btnUploadSheet.addEventListener('click', ()=> sheetInput.click());
+sheetInput.addEventListener('change', async e=>{
+  const f = e.target.files[0];
+  if(!f) return;
+  updateStatus('讀取工單中...');
+
+  try{
+    const buf = await f.arrayBuffer();
+    const wb = XLSX.read(buf, {type:'array'});
+    const sheetName = wb.SheetNames[0];
+    const ws = wb.Sheets[sheetName];
+    // v22: 強制從 A1 開始取值（避免工作表 !ref 從 B 欄或其他欄開始，造成 C/J 欄索引偏移）
+    const range = XLSX.utils.decode_range(ws['!ref']);
+    range.s.c = 0; range.s.r = 0;
+    const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:false, defval:'', range});
+
+    // v23: C欄只會有一行 Leaderboard Settings (1)，
+//      I欄(第9欄)每個斷行代表一個品項（日期+品名），
+//      J欄(第10欄)每個斷行代表該品項對應圖片檔名（可能含日期前綴，做部分比對）
+    let targetRow = null;
+    for(const r of rows){
+      const cRaw = (r[2]||'').toString();
+      const cNorm = cRaw.toLowerCase().replace(/\s+/g,' ').trim();
+      const target = 'leaderboard settings (1)';
+      const target2 = 'leaderboard settings(1)';
+      if(cNorm === target || cNorm === target2 || cNorm.includes(target) || cNorm.includes(target2)){
+        targetRow = r;
+        break;
+      }
+    }
+
+    if(!targetRow){
+      showToast('找不到 C欄含 Leaderboard Settings (1) 的那一行','err',2600);
+      updateStatus('就緒');
+      return;
+    }
+
+    const iCell = (targetRow[8]||'').toString(); // I 欄
+    const jCell = (targetRow[9]||'').toString(); // J 欄（對應圖片檔名依據）
+
+    const iLines = iCell.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+    const jLines = jCell.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+
+    const n = Math.min(6, Math.max(iLines.length, jLines.length)); // 最多 6 格版型
+    if(n === 0){
+      showToast('I/J 欄沒有可用的品項（斷行）','err',2600);
+      updateStatus('就緒');
+      return;
+    }
+
+    const parsed = [];
+    for(let k=0;k<n;k++){
+      const line = iLines[k] || '';
+      // 解析：開頭若是 1/25 之類則當日期，剩下當品名；否則日期留空
+      // 支援 "1/25品名" 或 "1/25 品名"
+      let date = '', name = (line||'').trim();
+      const m = name.match(/^(\d{1,2}\/\d{1,2})\s*(.*)$/);
+      if(m){
+        date = m[1];
+        name = (m[2]||'').trim();
+      }
+      const matchKey = jLines[k] || ''; // 用於比對圖片檔名（可含日期前綴）
+      parsed.push({date, name, matchKey});
+    }
+
+    items = parsed.map(p=>({
+      date: p.date,
+      name: p.name,
+      matchKey: p.matchKey,
+      imageDataURL:'',
+      x:0,y:0,width:0,height:0,
+      fileName:''
+    }));
+
+    render();
+    updateStatus('工單已套用（'+n+'項）');
+    showToast('工單資料已套用','ok',1800);
+  }catch(err){
+    showToast('讀取工單失敗：'+err.message,'err',2600);
+    updateStatus('就緒');
+  }finally{
+    sheetInput.value='';
+  }
+});
+
+/* ========= Temp save/load (includes edited imageDataURL) ========= */
+const btnDownloadTemp = document.getElementById('btnDownloadTemp');
+const btnUploadTemp = document.getElementById('btnUploadTemp');
+const tempInput = document.getElementById('tempInput');
+
+btnDownloadTemp.addEventListener('click', ()=>{
+  // Always read from DOM <img>.src (ground truth)
+  const payload = [];
+  items.forEach((it,i)=>{
+    const card = boardInner.querySelector(`.card[data-index="${i}"]`);
+    const img = card ? card.querySelector('.circle img') : null;
+    const dataURL = img ? img.src : (it.imageDataURL||'');
+    const x = img ? Number(img.dataset.left||0) : (it.x||0);
+    const y = img ? Number(img.dataset.top||0)  : (it.y||0);
+    const w = img ? Number(img.dataset.width||0) : (it.width||0);
+    const h = img ? Number(img.dataset.height||0): (it.height||0);
+        payload.push({index:i, date:it.date||'', name:it.name||'', matchKey: it.matchKey||'', dataURL, x,y,width:w,height:h, fileName: it.fileName||''});
+  });
+  const blob = new Blob([JSON.stringify({version:1, items:payload}, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download='leaderboard_state.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  showToast('已下載暫存檔（含編輯後圖片）','ok');
+});
+
+btnUploadTemp.addEventListener('click', ()=> tempInput.click());
+tempInput.addEventListener('change', e=>{
+  const f=e.target.files[0];
+  if(!f) return;
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    try{
+      const obj=JSON.parse(ev.target.result);
+      const arr = obj.items || obj.tiles || [];
+      if(!Array.isArray(arr) || !arr.length) throw new Error('檔案內容沒有 items');
+      items = arr.map(it=>({
+        date: it.date || '',
+        name: it.name || '',
+        matchKey: it.matchKey || it.jKey || '',
+        imageDataURL: it.dataURL || it.imageDataURL || '',
+        x: Number.isFinite(it.x) ? it.x : 0,
+        y: Number.isFinite(it.y) ? it.y : 0,
+        width: Number.isFinite(it.width) ? it.width : 0,
+        height: Number.isFinite(it.height) ? it.height : 0,
+        fileName: it.fileName || it.origName || ''
+      }));
+      render();
+      showToast('已還原暫存檔（含編輯後圖片）','ok',1800);
+      updateStatus('已還原暫存');
+    }catch(err){
+      showToast('暫存檔格式錯誤：'+err.message,'err',2600);
+      updateStatus('就緒');
+    }
+  };
+  reader.readAsText(f);
+  tempInput.value='';
+});
+
+
+/* ========= Font loading (v27) ========= */
+async function ensureFontLoaded(){
+  try{
+    const regular = new FontFace('ShopeeNotoSansRegular', "url('fonts/ShopeeNotoSans(content)-Regular.ttf')");
+    await regular.load();
+    document.fonts.add(regular);
+  }catch(e){}
+  try{
+    const medium = new FontFace('ShopeeNotoSansMedium', "url('fonts/ShopeeNotoSans(content)-Medium.ttf')");
+    await medium.load();
+    document.fonts.add(medium);
+  }catch(e){}
+  try{ await document.fonts.ready; }catch(e){}
+}
+/* ========= Download PNG 578x600 ========= */
+const btnDownloadPNG = document.getElementById('btnDownloadPNG');
+
+
+function wrapTextToWidth(ctx, text, maxWidth){
+  // v40: 模擬前端 ribbon-text 的自動換行（break-word），並尊重手動 Enter
+  const raw = (text ?? '').toString().replace(/\r/g,'');
+  const paras = raw.split('\n'); // manual line breaks
+  const lines = [];
+  const pushWrapped = (segment)=>{
+    if(segment === ''){ lines.push(''); return; }
+    let cur = '';
+    for(const ch of segment){
+      const test = cur + ch;
+      if(ctx.measureText(test).width <= maxWidth || cur === ''){
+        cur = test;
+      }else{
+        lines.push(cur);
+        cur = ch;
+      }
+    }
+    if(cur !== '') lines.push(cur);
+  };
+  paras.forEach(p=>pushWrapped(p));
+  // preserve at least 1 line
+  return lines.length ? lines : [''];
+}
+btnDownloadPNG.addEventListener('click', async ()=>{
+  updateStatus('產生PNG中...');
+  try{
+    await ensureFontLoaded();
+    const canvas = document.createElement('canvas');
+    canvas.width=578; canvas.height=600;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0,0,578,600);
+
+    // rounded bg
+    roundRect(ctx, 0,0,578,600,44);
+    ctx.fillStyle = '#F04A2A';
+    ctx.fill();
+
+    // layout params (match CSS)
+    const paddingLeft=42, paddingTop=56, colGap = (computeCols(items.length)===2?14:7), rowGap=47;
+    const cardW=160, cardH=234;
+
+    const cols = computeCols(items.length);
+    const rows = Math.ceil(items.length / cols);
+    const totalW = cols*cardW + (cols-1)*colGap;
+    let startX = paddingLeft;
+    if(cols===2){
+      startX = Math.round((578 - totalW)/2);
+    }
+    const startY = paddingTop;
+
+    for(let i=0;i<items.length;i++){
+      const it = items[i];
+      const r = Math.floor(i/cols);
+      const c = i%cols;
+      const x = startX + c*(cardW+colGap);
+      const y = startY + r*(cardH+rowGap);
+
+      // card yellow
+      roundRect(ctx, x,y,cardW,cardH,26);
+      ctx.fillStyle = '#FFE184';
+      ctx.fill();
+
+      // date pill
+      roundRect(ctx, x+14, y-34, 133, 53, 999);
+      ctx.fillStyle = '#1c387c';
+      ctx.fill();
+      ctx.fillStyle='#fff';
+      ctx.font='500 30px ShopeeNotoSansMedium, system-ui, -apple-system, "Segoe UI", Arial';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(it.date||'', x+14+133/2, y-34+53/2+1);
+
+      // orange circle
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(x+15+65, y+54+65, 65, 0, Math.PI*2);
+      ctx.closePath();
+      ctx.fillStyle = '#FF6B4A';
+      ctx.fill();
+
+      // v26: 不做圓形遮罩（圖片不需要裁切在圓內），但尺寸會限制不超過圓
+      if(it.imageDataURL){
+        const img = await loadImage(it.imageDataURL);
+        // draw image using stored geometry relative to MASK
+        const dx = x+15 + (it.x||0);
+        const dy = y+54 + (it.y||0);
+        const dw = it.width || img.naturalWidth;
+        const dh = it.height || img.naturalHeight;
+        ctx.drawImage(img, dx, dy, dw, dh);
+      }
+      ctx.restore();
+
+      // ribbon (image + text, match front-end)
+      // ribbon-bg: bottom:30px (from CSS), image centered, original size (no scaling)
+      try{
+        const ribImg = await loadImage(RIBBON_DATA_URL);
+        const ribX = x + Math.round((cardW - ribImg.naturalWidth)/2);
+        const ribY = y + cardH - 30 - ribImg.naturalHeight;
+        ctx.drawImage(ribImg, ribX, ribY);
+      }catch(e){
+        // fallback if image missing
+      }
+
+      // ribbon text box: bottom:34px, min-height 52 (from CSS)
+      const ribTextTop = y + cardH - 34 - 52;
+      const ribTextH = 52;
+      const maxTextW = (cardW - 40) - 24; // (left/right 20) minus padding (12*2)
+
+      ctx.fillStyle='#fff';
+      ctx.font='400 18px ShopeeNotoSansRegular, system-ui, -apple-system, "Segoe UI", Arial';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+
+      // Get lines using same wrapping behavior as ribbon-text (pre-wrap + break-word)
+      const lines = wrapTextToWidth(ctx, (it.name||''), maxTextW);
+
+      const lh = 18 * 1.12; // match CSS line-height
+      const centerY = ribTextTop + ribTextH/2 + 1;
+      const totalH = lines.length * lh;
+      let yy = centerY - totalH/2 + lh/2;
+      for(const line of lines){
+        ctx.fillText(line, x+cardW/2, yy);
+        yy += lh;
+      }
+    }
+
+    const url = canvas.toDataURL('image/png');
+    const a=document.createElement('a');
+    a.href=url;
+    a.download='leaderboard_578x600.png';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    updateStatus('已下載PNG');
+  }catch(err){
+    showToast('下載失敗：'+err.message,'err',2600);
+    updateStatus('就緒');
+  }
+});
+
+function splitEveryN(str, n){
+  if(!str) return [''];
+  const out=[];
+  for(let i=0;i<str.length;i+=n) out.push(str.slice(i,i+n));
+  return out;
+}
+function roundRect(ctx, x,y,w,h,r){
+  const rr = Math.min(r, w/2, h/2);
+  ctx.beginPath();
+  ctx.moveTo(x+rr, y);
+  ctx.arcTo(x+w, y, x+w, y+h, rr);
+  ctx.arcTo(x+w, y+h, x, y+h, rr);
+  ctx.arcTo(x, y+h, x, y, rr);
+  ctx.arcTo(x, y, x+w, y, rr);
+  ctx.closePath();
+}
+function loadImage(src){
+  return new Promise((resolve,reject)=>{
+    const img=new Image();
+    img.onload=()=>resolve(img);
+    img.onerror=()=>reject(new Error('圖片載入失敗'));
+    img.src=src;
+  });
+}
+
+
+/* ========= Auto remove white background (Smart Select) (v26) =========
+   需求：
+   - 上傳後，取圖片左上角 (2px,2px) 的顏色作為種子
+   - 直接套用「智慧選取」(flood fill + 容差) 把相近顏色變透明
+   注意：這是針對「白底」的自動化；若左上角不是背景色，效果可能會不如預期。
+*/
+async function removeWhiteBackground(dataURL, opts={}){
+  const tolerance = opts.tolerance ?? 26; // 容差可調，越大越容易吃到淺色
+  const img = await loadImage(dataURL);
+
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth;
+  c.height = img.naturalHeight;
+  const ctx = c.getContext('2d', {willReadFrequently:true});
+  ctx.drawImage(img, 0, 0);
+
+  const w = c.width, h = c.height;
+  const im = ctx.getImageData(0,0,w,h);
+  const d = im.data;
+
+  const sx = Math.max(0, Math.min(w-1, 2));
+  const sy = Math.max(0, Math.min(h-1, 2));
+  const si = (sy*w + sx)*4;
+  const seed = [d[si], d[si+1], d[si+2], d[si+3]];
+
+  // 若左上角不是「近白色」，就不做自動去背（避免誤殺）
+  const max = Math.max(seed[0], seed[1], seed[2]);
+  const min = Math.min(seed[0], seed[1], seed[2]);
+  const nearWhite = (max >= 240) && ((max-min) <= 22);
+  if(!nearWhite){
+    return c.toDataURL('image/png');
+  }
+
+  const withinTol = (r,g,b,a)=>{
+    return Math.abs(r-seed[0])<=tolerance &&
+           Math.abs(g-seed[1])<=tolerance &&
+           Math.abs(b-seed[2])<=tolerance &&
+           Math.abs(a-seed[3])<=tolerance;
+  };
+
+  const q = [[sx,sy]];
+  const visited = new Uint8Array(w*h);
+
+  while(q.length){
+    const [x,y] = q.pop();
+    const idx = y*w + x;
+    if(visited[idx]) continue;
+    visited[idx]=1;
+
+    const ii = idx*4;
+    const r=d[ii], g=d[ii+1], b=d[ii+2], a=d[ii+3];
+    if(!withinTol(r,g,b,a)) continue;
+
+    // make transparent
+    d[ii+3]=0;
+
+    if(x>0) q.push([x-1,y]);
+    if(x<w-1) q.push([x+1,y]);
+    if(y>0) q.push([x,y-1]);
+    if(y<h-1) q.push([x,y+1]);
+  }
+
+  ctx.putImageData(im,0,0);
+  return c.toDataURL('image/png');
+}
+/* ========= Editor (same as v19 behavior) ========= */
+const eraseModal = document.getElementById('eraseModal');
+const eraseCanvas = document.getElementById('eraseCanvas');
+const eCtx = eraseCanvas.getContext('2d', { willReadFrequently:true });
+const brushSize = document.getElementById('brushSize');
+const toleranceSlider = document.getElementById('tolerance');
+const eraseReset = document.getElementById('eraseReset');
+const eraseApply = document.getElementById('eraseApply');
+const eraseCancel = document.getElementById('eraseCancel');
+const cropConfirm = document.getElementById('cropConfirm');
+
+let editingTargetImg = null;
+let originalImg = null;          // for Reset only
+let drawn = false;
+
+let lastX=0, lastY=0, drawing=false;
+let cropStart=null, cropEnd=null, cropping=false;
+let cropBaseImageData = null;
+
+function snapshotCanvas(){
+  cropBaseImageData = eCtx.getImageData(0,0,eraseCanvas.width, eraseCanvas.height);
+}
+function restoreSnapshot(){
+  if(cropBaseImageData){
+    eCtx.putImageData(cropBaseImageData, 0, 0);
+  }
+}
+
+document.querySelectorAll('input[name="mode"]').forEach(r=>{
+  r.addEventListener('change', ()=>{
+    const mode = document.querySelector('input[name="mode"]:checked').value;
+    if(mode !== 'crop'){
+      if(cropBaseImageData){ restoreSnapshot(); }
+      cropStart = cropEnd = null;
+    } else {
+      snapshotCanvas();
+      drawCropRect();
+    }
+  });
+});
+
+function openEraseEditor(imgEl){
+  editingTargetImg = imgEl;
+  originalImg = new Image();
+  originalImg.onload = ()=>{
+    eraseCanvas.width  = Math.max(1, originalImg.naturalWidth);
+    eraseCanvas.height = Math.max(1, originalImg.naturalHeight);
+    eCtx.clearRect(0,0,eraseCanvas.width,eraseCanvas.height);
+    eCtx.drawImage(originalImg, 0, 0, eraseCanvas.width, eraseCanvas.height);
+    drawn = true;
+    cropStart = cropEnd = null;
+    cropping = false;
+    cropBaseImageData = null;
+    eraseModal.classList.add('show');
+  };
+  originalImg.src = imgEl.src;
+}
+
+function redrawOriginal(){
+  if(!originalImg) return;
+  eCtx.clearRect(0,0,eraseCanvas.width,eraseCanvas.height);
+  eCtx.drawImage(originalImg, 0, 0, eraseCanvas.width, eraseCanvas.height);
+}
+
+eraseCanvas.addEventListener('mousedown', (e)=>{
+  if(!drawn) return;
+  const mode = document.querySelector('input[name="mode"]:checked').value;
+  const rect = eraseCanvas.getBoundingClientRect();
+  lastX = e.clientX - rect.left;
+  lastY = e.clientY - rect.top;
+
+  if(mode==='erase'){
+    cropBaseImageData = null;
+    drawing = true;
+  }else if(mode==='select'){
+    cropBaseImageData = null;
+    floodSelect(Math.round(lastX), Math.round(lastY), Number(toleranceSlider.value));
+  }else if(mode==='crop'){
+    // v19 behavior: starting a new crop clears previous dashed frame
+    if(cropBaseImageData){ restoreSnapshot(); }
+    snapshotCanvas();
+    cropping = true;
+    cropStart = {x:lastX, y:lastY};
+    cropEnd = {x:lastX, y:lastY};
+    drawCropRect();
+  }
+});
+
+window.addEventListener('mousemove', (e)=>{
+  if(!drawn) return;
+  const mode = document.querySelector('input[name="mode"]:checked').value;
+  const rect = eraseCanvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+
+  if(mode==='erase' && drawing){
+    eCtx.save();
+    eCtx.globalCompositeOperation = 'destination-out';
+    eCtx.beginPath();
+    eCtx.lineCap = 'round';
+    eCtx.lineJoin = 'round';
+    eCtx.lineWidth = Number(brushSize.value);
+    eCtx.moveTo(lastX,lastY);
+    eCtx.lineTo(x,y);
+    eCtx.stroke();
+    eCtx.restore();
+    lastX=x; lastY=y;
+  }else if(mode==='crop' && cropping){
+    cropEnd = {x,y};
+    drawCropRect();
+  }
+});
+
+window.addEventListener('mouseup', ()=>{
+  drawing=false;
+  if(cropping){
+    cropping=false;
+    // keep dashed frame visible after mouse up
+    drawCropRect();
+  }
+});
+
+eraseReset.addEventListener('click', ()=>{
+  redrawOriginal();
+  cropStart=cropEnd=null;
+  cropBaseImageData=null;
+});
+
+function colorAt(data, w, x, y){
+  const i = (y*w + x)*4;
+  return [data[i], data[i+1], data[i+2], data[i+3]];
+}
+function withinTol(a,b,tol){
+  return Math.abs(a[0]-b[0])<=tol && Math.abs(a[1]-b[1])<=tol && Math.abs(a[2]-b[2])<=tol && Math.abs(a[3]-b[3])<=tol;
+}
+function floodSelect(sx, sy, tol=20){
+  const x = Math.max(0, Math.min(eraseCanvas.width-1, Math.round(sx)));
+  const y = Math.max(0, Math.min(eraseCanvas.height-1, Math.round(sy)));
+  const img = eCtx.getImageData(0,0,eraseCanvas.width,eraseCanvas.height);
+  const {data, width:w, height:h} = img;
+  const seed = colorAt(data, w, x, y);
+  const q = [[x,y]];
+  const visited = new Uint8Array(w*h);
+  const setTransparent = (px,py)=>{
+    const i = (py*w+px)*4;
+    data[i+3] = 0;
+  };
+  while(q.length){
+    const [cx,cy] = q.pop();
+    const idx = cy*w+cx;
+    if(visited[idx]) continue;
+    visited[idx]=1;
+    const col = colorAt(data,w,cx,cy);
+    if(!withinTol(col, seed, tol)) continue;
+    setTransparent(cx,cy);
+    if(cx>0) q.push([cx-1,cy]);
+    if(cx<w-1) q.push([cx+1,cy]);
+    if(cy>0) q.push([cx,cy-1]);
+    if(cy<h-1) q.push([cx,cy+1]);
+  }
+  eCtx.putImageData(img,0,0);
+}
+
+function drawCropRect(){
+  restoreSnapshot();
+  if(!(cropStart && cropEnd)) return;
+  const x=Math.min(cropStart.x, cropEnd.x);
+  const y=Math.min(cropStart.y, cropEnd.y);
+  const w=Math.abs(cropEnd.x - cropStart.x);
+  const h=Math.abs(cropEnd.y - cropStart.y);
+  eCtx.save();
+  eCtx.strokeStyle='#00E5FF';
+  eCtx.lineWidth=2;
+  eCtx.setLineDash([6,4]);
+  eCtx.strokeRect(x,y,w,h);
+  eCtx.restore();
+}
+
+function getCroppedCanvasFromSelection(){
+  if(!(cropStart && cropEnd)) return null;
+  if(cropBaseImageData){
+    eCtx.putImageData(cropBaseImageData, 0, 0);
+  }
+  const x0 = Math.max(0, Math.min(cropStart.x, cropEnd.x));
+  const y0 = Math.max(0, Math.min(cropStart.y, cropEnd.y));
+  const w0 = Math.min(eraseCanvas.width - x0, Math.abs(cropEnd.x - cropStart.x));
+  const h0 = Math.min(eraseCanvas.height - y0, Math.abs(cropEnd.y - cropStart.y));
+  if(w0<=2 || h0<=2) return null;
+
+  const tmp = document.createElement('canvas');
+  tmp.width = w0; tmp.height = h0;
+  const tctx = tmp.getContext('2d');
+  const cut = eCtx.getImageData(x0,y0,w0,h0);
+  tctx.putImageData(cut, 0, 0);
+  return tmp;
+}
+
+function applyEditedToTarget(closeAfter){
+  if(!editingTargetImg) return;
+  const outCanvas = getCroppedCanvasFromSelection() || eraseCanvas;
+  const dataUrl = outCanvas.toDataURL('image/png');
+
+  const idx = parseInt(editingTargetImg.dataset.index, 10);
+
+  // v42: 裁切後圖片尺寸/比例可能改變；同步更新前端顯示的寬高與位置，避免被拉伸變形
+  // 目標：保持「縮放倍率」一致（不變形），並限制顯示尺寸不超過 MASK x MASK
+  const prevX = Number(items[idx].x ?? 0);
+  const prevY = Number(items[idx].y ?? 0);
+  const prevW = Number(items[idx].width ?? 0);
+  const prevH = Number(items[idx].height ?? 0);
+
+  const prevImg = editingTargetImg;
+  const prevNatW = prevImg.naturalWidth || prevW || 1;
+  const prevNatH = prevImg.naturalHeight || prevH || 1;
+
+  // 先把 src 換成新的（DOM 仍是 ground truth）
+  prevImg.src = dataUrl;
+  items[idx].imageDataURL = dataUrl;
+
+  // 等新圖載入後，依新 natural size 重新計算顯示 w/h（等比）與 x/y（保持中心）
+  const tmp = new Image();
+  tmp.onload = ()=>{
+    // 使用之前的縮放倍率（以寬為主；若拿不到就用 auto-fit）
+    let scale = prevW > 0 ? (prevW / prevNatW) : Math.min(MASK/tmp.naturalWidth, MASK/tmp.naturalHeight, 1);
+
+    let newW = Math.round(tmp.naturalWidth * scale);
+    let newH = Math.round(tmp.naturalHeight * scale);
+
+    // 若裁切後反而超過 MASK，縮回去
+    const clampScale = Math.min(MASK / Math.max(newW,1), MASK / Math.max(newH,1), 1);
+    if(clampScale < 1){
+      newW = Math.round(newW * clampScale);
+      newH = Math.round(newH * clampScale);
+      scale = scale * clampScale;
+    }
+
+    // 保持中心點
+    const centerX = prevX + prevW/2;
+    const centerY = prevY + prevH/2;
+    const newX = Math.round(centerX - newW/2);
+    const newY = Math.round(centerY - newH/2);
+
+    items[idx].x = newX;
+    items[idx].y = newY;
+    items[idx].width = newW;
+    items[idx].height = newH;
+
+    applyImgStyle(prevImg, newX, newY, newW, newH);
+    render(); // 立即同步畫面
+
+    if(closeAfter){
+      eraseModal.classList.remove('show');
+      editingTargetImg = null;
+      originalImg = null;
+      cropBaseImageData = null;
+      cropStart = cropEnd = null;
+    }else{
+      // continue editing on the new result
+      eraseCanvas.width  = Math.max(1, tmp.naturalWidth);
+      eraseCanvas.height = Math.max(1, tmp.naturalHeight);
+      eCtx.clearRect(0,0,eraseCanvas.width,eraseCanvas.height);
+      eCtx.drawImage(tmp, 0, 0, eraseCanvas.width, eraseCanvas.height);
+      cropBaseImageData = null;
+      cropStart = cropEnd = null;
+      drawCropRect();
+    }
+  };
+  tmp.src = dataUrl;
+}
+
+eraseApply.addEventListener('click', ()=>{
+  if(cropBaseImageData) restoreSnapshot();
+  applyEditedToTarget(true);
+  showToast('已套用修改','ok');
+});
+
+cropConfirm.addEventListener('click', ()=>{
+  if(cropBaseImageData) restoreSnapshot();
+  applyEditedToTarget(false);
+  showToast('已套用裁切（可繼續編輯）','ok',1500);
+});
+
+eraseCancel.addEventListener('click', ()=>{
+  document.getElementById('cancelNudge').classList.add('show');
+});
+
+document.getElementById('nudgeClose').addEventListener('click', ()=>{
+  document.getElementById('cancelNudge').classList.remove('show');
+  eraseModal.classList.remove('show');
+  editingTargetImg = null;
+  originalImg = null;
+  cropBaseImageData = null;
+  cropStart = cropEnd = null;
+});
+
+document.getElementById('nudgeImg').addEventListener('click', ()=>{
+  window.open('https://www.photoroom.com/tools/background-remover','_blank');
+});
+</script>
+</body>
+</html>
