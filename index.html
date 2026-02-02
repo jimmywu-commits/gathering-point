@@ -1,0 +1,844 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Tile Grid - v13（編輯功能保留 + 暫存含編輯後圖片）</title>
+<style>
+:root{font-family:system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;}
+body{margin:0;background:#f2f2f2;padding:20px;display:flex;flex-direction:column;align-items:center;color:#111;}
+.toolbar{width:100%;max-width:1280px;display:flex;gap:8px;align-items:center;padding:8px 12px;box-sizing:border-box;}
+.toolbar button{padding:8px 12px;border:1px solid #ccc;background:white;border-radius:6px;cursor:pointer;}
+.grid{display:grid;grid-template-columns:repeat(5,200px);gap:8px;max-width:1280px;justify-content:start;}
+.cell{width:200px;display:flex;flex-direction:column;align-items:center;gap:6px;}
+.tile{width:200px;height:200px;position:relative;display:flex;align-items:center;justify-content:center;}
+.circle{width:188px;height:188px;border-radius:50%;background:white;overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 1px rgba(0,0,0,0.06) inset;}
+.circle img{position:absolute;user-select:none;cursor:ew-resize;border-radius:0;}
+.placeholder{color:#999;font-size:13px}
+.filename{font-size:7px;color:#777;width:188px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+
+.replace-btn,.edit-btn{
+  position:absolute; top:6px; width:26px; height:26px; border-radius:6px;
+  background:rgba(255,255,255,0.92);
+  display:flex; align-items:center; justify-content:center;
+  box-shadow:0 1px 2px rgba(0,0,0,0.1);
+  cursor:pointer;
+  border:1px solid rgba(0,0,0,0.06);
+  z-index:10;
+  font-size:14px; line-height:1;
+}
+.replace-btn{left:6px;}
+.edit-btn{right:6px;}
+
+.toast{position:fixed;right:16px;top:16px;z-index:99999;background:#111;color:#fff;font-size:12px;padding:8px 10px;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.3);opacity:.98;max-width:68ch;display:none}
+.toast.ok{background:#16a34a}
+.toast.err{background:#dc2626}
+
+/* ====== Editor Modal ====== */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:9998;}
+.modal.show{display:flex;}
+.modal-panel{background:#111;border-radius:12px;padding:12px;box-shadow:0 10px 30px rgba(0,0,0,.5);color:#fff;display:flex;flex-direction:column;gap:8px;min-width:min(920px, calc(100vw - 24px));max-width:calc(100vw - 24px)}
+.modal-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:14px}
+.modal-toolbar label{font-size:12px}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;align-items:center}
+.modal-actions button{border:0;border-radius:8px;padding:6px 10px;cursor:pointer}
+.btn-primary{background:#2ecc71;color:#111}
+.btn-danger{background:#e74c3c;color:#fff}
+.btn-ghost{background:#444;color:#fff}
+.checkerboard{position:relative;display:inline-block;border-radius:8px;overflow:auto;background: conic-gradient(#ccc 25%, #fff 0 50%, #ccc 0 75%, #fff 0) 0 0/20px 20px;padding:0;max-width:100%;max-height:70vh}
+#eraseCanvas{display:block;background:transparent;max-width:100%;height:auto}
+
+.nudge{position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:9999; background:rgba(0,0,0,.55);}
+.nudge.show{display:flex;}
+.nudge-box{position:relative; width:300px; height:200px; background:#0000; border-radius:10px; overflow:hidden;}
+.nudge-box img{width:100%; height:100%; object-fit:cover; cursor:pointer; display:block;}
+.nudge-close{position:absolute; right:6px; top:6px; width:28px; height:28px; border-radius:999px; background:#111; color:#fff; border:0; cursor:pointer; font-size:16px; line-height:28px; text-align:center;}
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <button id="btnUpload">上傳圖片 (資料夾/多選)</button>
+  <input id="fileInput" type="file" webkitdirectory multiple accept="image/*" style="display:none">
+
+  <button id="btnDownloadAll">下載所有圖片 (200x200 PNG)</button>
+
+  <button id="btnDownloadTemp">下載暫存檔 (JSON)</button>
+  <button id="btnUploadTemp">上傳暫存檔</button>
+  <input id="tempUploadInput" type="file" accept="application/json" style="display:none">
+
+  <div style="flex:1"></div>
+  <div id="status">狀態：就緒</div>
+</div>
+
+<div style="margin-top:8px;width:100%;max-width:1280px;border:2px dashed rgba(0,0,0,0.06);padding:12px;text-align:center;color:#666;border-radius:8px;background:#fafafa" id="dropzone">
+  或把圖片/資料夾拖到這裡
+</div>
+
+<div style="height:12px"></div>
+<div id="grid" class="grid" tabindex="0"></div>
+
+<!-- Editor Modal -->
+<div class="modal" id="eraseModal" aria-hidden="true">
+  <div class="modal-panel">
+    <div class="modal-toolbar">
+      <label><input type="radio" name="mode" value="erase" checked> 擦除</label>
+      <label><input type="radio" name="mode" value="select"> 智慧選取</label>
+      <label><input type="radio" name="mode" value="crop"> 裁切</label>
+      <label>筆刷：<input id="brushSize" type="range" min="5" max="120" value="40"></label>
+      <label>容差：<input id="tolerance" type="range" min="0" max="80" value="20"></label>
+      <span style="opacity:.8;font-size:12px">裁切：拖曳框選；智慧選取：點擊；擦除：拖曳</span>
+    </div>
+    <div class="checkerboard">
+      <canvas id="eraseCanvas" width="800" height="400"></canvas>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-ghost" id="eraseReset" type="button">重作</button>
+      <button class="btn-primary" id="cropConfirm" type="button">確定裁切</button>
+      <button class="btn-primary" id="eraseApply" type="button">完成</button>
+      <button class="btn-danger" id="eraseCancel" type="button">取消</button>
+    </div>
+  </div>
+</div>
+
+<div class="nudge" id="cancelNudge" aria-hidden="true">
+  <div class="nudge-box">
+    <button class="nudge-close" id="nudgeClose" aria-label="關閉">✖</button>
+    <img id="nudgeImg" alt="跳出提示"
+      src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='400'%3E%3Crect width='600' height='400' fill='%23111'/%3E%3Ctext x='50%25' y='45%25' dominant-baseline='middle' text-anchor='middle' fill='%23fff' font-size='20'%3E已取消編輯%3C/text%3E%3Ctext x='50%25' y='58%25' dominant-baseline='middle' text-anchor='middle' fill='%23bbb' font-size='14'%3E點此可開啟線上去背工具%3C/text%3E%3C/svg%3E" />
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+/* ========================
+   Utils
+======================== */
+const status = document.getElementById('status');
+function updateStatus(t){ status.textContent='狀態：'+t; }
+function showToast(msg, type='ok', ms=1600){
+  const t=document.getElementById('toast');
+  t.textContent=msg;
+  t.className='toast ' + (type==='ok'?'ok':'err');
+  t.style.display='block';
+  clearTimeout(showToast._tid);
+  showToast._tid=setTimeout(()=>{ t.style.display='none'; }, ms);
+}
+function sanitizeFilename(name){
+  return (name||'image').replace(/[\/\\?%*:|"<>]/g,'_');
+}
+
+/* ========================
+   Grid
+======================== */
+const GRID = document.getElementById('grid');
+let tiles = [];
+
+function initGrid(n=5){
+  GRID.innerHTML='';
+  tiles=[];
+  for(let i=0;i<n;i++) createCell(i);
+}
+initGrid(5);
+
+function createCell(i){
+  const cell=document.createElement('div'); cell.className='cell';
+  const tile=document.createElement('div'); tile.className='tile'; tile.dataset.index=i;
+
+  const replaceBtn=document.createElement('div');
+  replaceBtn.className='replace-btn'; replaceBtn.title='更換圖片'; replaceBtn.textContent='⟳';
+  tile.appendChild(replaceBtn);
+
+  const editBtn=document.createElement('div');
+  editBtn.className='edit-btn'; editBtn.title='修改（去背/裁切）'; editBtn.textContent='✎';
+  tile.appendChild(editBtn);
+
+  const circle=document.createElement('div'); circle.className='circle';
+  const ph=document.createElement('div'); ph.className='placeholder'; ph.textContent='點此上傳/拖曳圖片';
+  circle.appendChild(ph);
+  tile.appendChild(circle);
+
+  cell.appendChild(tile);
+  const label=document.createElement('div'); label.className='filename'; label.textContent='';
+  cell.appendChild(label);
+  GRID.appendChild(cell);
+
+  tiles[i]={cell,tile,circle,label,data:null};
+
+  circle.addEventListener('contextmenu', e=>e.preventDefault()); // no right-click menu in 188
+
+  tile.addEventListener('click', e=>{
+    if(e.target.closest('.replace-btn') || e.target.closest('.edit-btn')) return;
+    if(e.target.tagName!=='IMG'){
+      const inp=document.createElement('input'); inp.type='file'; inp.accept='image/*';
+      inp.onchange=()=>{
+        const f=inp.files[0]; if(!f) return;
+        const r=new FileReader();
+        r.onload=ev=>placeImageAutoFit(tiles[i], ev.target.result, f.name);
+        r.readAsDataURL(f);
+      };
+      inp.click();
+    }
+  });
+
+  replaceBtn.addEventListener('click', e=>{
+    e.stopPropagation();
+    // v18: 「更換圖片」只選單張圖片（與「上傳圖片(資料夾/多選)」不同）
+    const inp=document.createElement('input');
+    inp.type='file';
+    inp.accept='image/*';
+    inp.multiple=false;
+    inp.onchange=()=>{
+      const f=inp.files[0];
+      if(!f) return;
+      const r=new FileReader();
+      r.onload=ev=>placeImageAutoFit(tiles[i], ev.target.result, f.name);
+      r.readAsDataURL(f);
+    };
+    inp.click();
+  });
+editBtn.addEventListener('click', e=>{
+    e.stopPropagation();
+    const img = circle.querySelector('img');
+    if(!img){ showToast('此格尚未有圖片', 'err'); return; }
+    openEraseEditor(img);
+  });
+
+  return cell;
+}
+
+/* ========================
+   Place / Restore image
+======================== */
+function placeImageAutoFit(tileObj, dataURL, name){
+  // auto-fit into 188, center, no upscaling
+  const max=188;
+  const circle=tileObj.circle;
+  circle.innerHTML='';
+  const img=new Image();
+  img.draggable=false;
+  img.src=dataURL;
+  img.dataset.name=name||'';
+  img.onload=()=>{
+    const scale=Math.min(max/img.naturalWidth, max/img.naturalHeight, 1);
+    const w=Math.round(img.naturalWidth*scale);
+    const h=Math.round(img.naturalHeight*scale);
+    const left=Math.round((max-w)/2);
+    const top=Math.round((max-h)/2);
+    applyImgStyle(img, left, top, w, h);
+    img.dataset.index = tileObj.tile.dataset.index;
+    setupInteractions(img);
+    circle.appendChild(img);
+    tileObj.label.textContent = name||'';
+    tileObj.data = {dataURL, x:left, y:top, width:w, height:h, origName:name||''};
+  };
+}
+
+function restoreImageExact(tileObj, saved){
+  // restore exact x/y/width/height + dataURL (includes edited result)
+  const circle=tileObj.circle;
+  circle.innerHTML='';
+  const img=new Image();
+  img.draggable=false;
+  img.src=saved.dataURL;
+  img.dataset.name=saved.origName||'';
+  img.onload=()=>{
+    const left = Number.isFinite(saved.x) ? saved.x : 0;
+    const top  = Number.isFinite(saved.y) ? saved.y : 0;
+    const w    = Number.isFinite(saved.width) ? saved.width : img.naturalWidth;
+    const h    = Number.isFinite(saved.height) ? saved.height : img.naturalHeight;
+    applyImgStyle(img, left, top, w, h);
+    img.dataset.index = tileObj.tile.dataset.index;
+    setupInteractions(img);
+    circle.appendChild(img);
+    tileObj.label.textContent = saved.origName||'';
+    tileObj.data = {dataURL:saved.dataURL, x:left, y:top, width:w, height:h, origName:saved.origName||''};
+  };
+}
+
+function applyImgStyle(img, left, top, w, h){
+  img.style.position='absolute';
+  img.style.left = left + 'px';
+  img.style.top  = top  + 'px';
+  img.style.width  = w + 'px';
+  img.style.height = h + 'px';
+  img.dataset.left = left; img.dataset.top = top;
+  img.dataset.width = w; img.dataset.height = h;
+  img.style.cursor='ew-resize';
+}
+
+/* ========================
+   Zoom / Pan (left-drag zoom centered, right-drag pan)
+======================== */
+function setupInteractions(img){
+  img.addEventListener('contextmenu', e=>e.preventDefault());
+
+  // zoom
+  let zooming=false, startX=0, origW=0, origH=0, origLeft=0, origTop=0;
+  img.addEventListener('mousedown', e=>{
+    if(e.button===0){
+      e.preventDefault();
+      zooming=true;
+      startX=e.clientX;
+      origW=parseFloat(img.dataset.width); origH=parseFloat(img.dataset.height);
+      origLeft=parseFloat(img.dataset.left); origTop=parseFloat(img.dataset.top);
+      window.addEventListener('mousemove', onZoom);
+      window.addEventListener('mouseup', endZoom);
+    } else if(e.button===2){
+      e.preventDefault();
+      startPan(e);
+    }
+  });
+
+  function onZoom(e){
+    if(!zooming) return;
+    const dx=e.clientX-startX;
+    const factor=1+dx/200;
+    let newW=Math.max(10, Math.round(origW*factor));
+    let newH=Math.max(10, Math.round(origH*factor));
+
+    const centerX=origLeft + origW/2;
+    const centerY=origTop + origH/2;
+    const newLeft=Math.round(centerX - newW/2);
+    const newTop=Math.round(centerY - newH/2);
+
+    applyImgStyle(img, newLeft, newTop, newW, newH);
+
+    const idx=parseInt(img.dataset.index,10);
+    if(tiles[idx] && tiles[idx].data){
+      tiles[idx].data.x=newLeft; tiles[idx].data.y=newTop;
+      tiles[idx].data.width=newW; tiles[idx].data.height=newH;
+    }
+  }
+  function endZoom(){
+    zooming=false;
+    window.removeEventListener('mousemove', onZoom);
+    window.removeEventListener('mouseup', endZoom);
+  }
+
+  // pan
+  let panning=false, panStartX=0, panStartY=0, panOrigLeft=0, panOrigTop=0;
+  function startPan(e){
+    panning=true;
+    panStartX=e.clientX; panStartY=e.clientY;
+    panOrigLeft=parseFloat(img.dataset.left)||0;
+    panOrigTop=parseFloat(img.dataset.top)||0;
+    img.style.cursor='grabbing';
+    window.addEventListener('mousemove', onPan);
+    window.addEventListener('mouseup', endPan);
+    window.addEventListener('contextmenu', preventContext, true);
+  }
+  function onPan(e){
+    if(!panning) return;
+    const dx=e.clientX-panStartX;
+    const dy=e.clientY-panStartY;
+    const newLeft=Math.round(panOrigLeft+dx);
+    const newTop=Math.round(panOrigTop+dy);
+    img.style.left=newLeft+'px'; img.style.top=newTop+'px';
+    img.dataset.left=newLeft; img.dataset.top=newTop;
+    const idx=parseInt(img.dataset.index,10);
+    if(tiles[idx] && tiles[idx].data){
+      tiles[idx].data.x=newLeft; tiles[idx].data.y=newTop;
+    }
+  }
+  function endPan(){
+    panning=false;
+    img.style.cursor='ew-resize';
+    window.removeEventListener('mousemove', onPan);
+    window.removeEventListener('mouseup', endPan);
+    window.removeEventListener('contextmenu', preventContext, true);
+  }
+  function preventContext(e){ e.preventDefault(); }
+}
+
+/* ========================
+   Upload folder/files
+======================== */
+const btnUpload = document.getElementById('btnUpload');
+const fileInput = document.getElementById('fileInput');
+const dropzone = document.getElementById('dropzone');
+
+btnUpload.addEventListener('click', ()=> fileInput.click());
+fileInput.addEventListener('change', e=>{
+  const files = Array.from(e.target.files).filter(f=>f.type && f.type.startsWith('image/'));
+  handleFiles(files);
+  fileInput.value='';
+});
+
+['dragenter','dragover'].forEach(ev=>dropzone.addEventListener(ev,e=>{
+  e.preventDefault(); e.stopPropagation();
+  dropzone.style.background='#f0f8ff';
+  updateStatus('拖放中');
+}));
+['dragleave','dragend','drop'].forEach(ev=>dropzone.addEventListener(ev,e=>{
+  e.preventDefault(); e.stopPropagation();
+  dropzone.style.background='';
+  updateStatus('就緒');
+}));
+dropzone.addEventListener('drop', e=>{
+  e.preventDefault();
+  const items=e.dataTransfer.items;
+  let files=[];
+  if(items && items.length){
+    for(let i=0;i<items.length;i++){
+      const it=items[i];
+      if(it.kind==='file'){
+        const f=it.getAsFile();
+        if(f && f.type.startsWith('image/')) files.push(f);
+      }
+    }
+  }else{
+    files=Array.from(e.dataTransfer.files||[]).filter(f=>f.type && f.type.startsWith('image/'));
+  }
+  handleFiles(files);
+});
+
+async function handleFiles(files){
+  if(!files || files.length===0){ showToast('沒有選到圖片', 'err'); return; }
+  updateStatus('上傳中('+files.length+'張)');
+  files = Array.from(files).filter(f=>f.type && f.type.startsWith('image/'));
+  files.sort((a,b)=> (a.webkitRelativePath||a.name).localeCompare(b.webkitRelativePath||b.name));
+  let index=0;
+  for(let i=0;i<tiles.length;i++){
+    if(!tiles[i] || !tiles[i].data || !tiles[i].data.dataURL){ index=i; break; }
+    index=i+1;
+  }
+  for(const f of files){
+    await new Promise(res=>{
+      const r=new FileReader();
+      r.onload=ev=>{
+        if(!tiles[index]) createCell(index);
+        placeImageAutoFit(tiles[index], ev.target.result, f.name);
+        index++;
+        res();
+      };
+      r.readAsDataURL(f);
+    });
+  }
+  updateStatus('上傳完成');
+}
+
+/* ========================
+   Download all images (200x200, white 188 circle centered, outside transparent)
+======================== */
+const btnDownloadAll = document.getElementById('btnDownloadAll');
+
+async function renderPNG200(data){
+  return new Promise(resolve=>{
+    const img=new Image();
+    img.onload=()=>{
+      const canvas=document.createElement('canvas');
+      canvas.width=200; canvas.height=200;
+      const ctx=canvas.getContext('2d');
+      ctx.clearRect(0,0,200,200);
+
+      // circle mask + white fill
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(100,100,94,0,Math.PI*2);
+      ctx.closePath();
+      ctx.fillStyle='white';
+      ctx.fill();
+      ctx.clip();
+
+      // draw image using stored x/y/width/height relative to 188, then shift by offset (6,6)
+      const offset=6;
+      const dx = (data.x||0) + offset;
+      const dy = (data.y||0) + offset;
+      const dw = (data.width!=null) ? data.width : img.naturalWidth;
+      const dh = (data.height!=null) ? data.height : img.naturalHeight;
+      ctx.drawImage(img, dx, dy, dw, dh);
+
+      ctx.restore();
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.src=data.dataURL;
+  });
+}
+
+btnDownloadAll.addEventListener('click', async ()=>{
+  const items=[];
+  for(let i=0;i<tiles.length;i++){
+    const t=tiles[i];
+    if(t && t.data && t.data.dataURL) items.push({i, data:t.data});
+  }
+  if(items.length===0){ showToast('沒有可下載的圖片', 'err'); return; }
+
+  updateStatus('準備下載('+items.length+'張)');
+  let count=0;
+  for(const it of items){
+    const url = await renderPNG200(it.data);
+    const a=document.createElement('a');
+    const safe = sanitizeFilename(it.data.origName || ('image-'+(it.i+1))).replace(/\.[^/.]+$/, '');
+    a.href=url;
+    a.download=safe+'.png';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    count++;
+    updateStatus('下載中 '+count+'/'+items.length);
+    await new Promise(r=>setTimeout(r, 120));
+  }
+  updateStatus('已下載 '+count+'張');
+});
+
+/* ========================
+   Temp save/load (包含編輯後 dataURL)
+======================== */
+const btnDownloadTemp = document.getElementById('btnDownloadTemp');
+const btnUploadTemp = document.getElementById('btnUploadTemp');
+const tempUploadInput = document.getElementById('tempUploadInput');
+
+btnDownloadTemp.addEventListener('click', ()=>{
+  // v16: 以 DOM 內 <img> 為準（確保包含編輯後結果）
+  const payload = [];
+  for(let i=0;i<tiles.length;i++){
+    const t = tiles[i];
+    if(!t) continue;
+    const img = t.circle ? t.circle.querySelector('img') : null;
+    if(!img) continue;
+
+    const dataURL = img.src; // edited result included
+    const x = Number(img.dataset.left || (parseFloat(img.style.left)||0));
+    const y = Number(img.dataset.top  || (parseFloat(img.style.top)||0));
+    const w = Number(img.dataset.width  || (parseFloat(img.style.width)||null));
+    const h = Number(img.dataset.height || (parseFloat(img.style.height)||null));
+    const origName = (t.data && t.data.origName) ? t.data.origName : (img.dataset.name||'');
+
+    // keep tiles data synced
+    t.data = { dataURL, x, y, width:w, height:h, origName };
+    payload.push({index:i, dataURL, x, y, width:w, height:h, origName});
+  }
+
+  const blob = new Blob([JSON.stringify({version:2, tiles:payload}, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download='tilegrid_state.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  showToast('已下載暫存檔（含編輯後圖片）','ok');
+});
+
+btnUploadTemp.addEventListener('click', ()=> tempUploadInput.click());
+tempUploadInput.addEventListener('change', e=>{
+  const f=e.target.files[0];
+  if(!f) return;
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    try{
+      const obj=JSON.parse(ev.target.result);
+      const arr = obj.tiles || [];
+      const maxIdx = arr.length ? Math.max(...arr.map(x=>x.index)) : 4;
+      initGrid(Math.max(5, maxIdx+1));
+      for(const it of arr){
+        if(!tiles[it.index]) createCell(it.index);
+        restoreImageExact(tiles[it.index], it); // restore edited dataURL + exact geometry
+      }
+      showToast('已還原暫存檔（含編輯後圖片）','ok');
+      updateStatus('已還原暫存檔');
+    }catch(err){
+      showToast('暫存檔格式錯誤：'+err.message,'err',2200);
+    }
+  };
+  reader.readAsText(f);
+  tempUploadInput.value='';
+});
+
+
+/* =========================
+   Editor (erase/select/crop)
+========================= */
+/* =========================
+   Editor (erase/select/crop)
+========================= */
+const eraseModal = document.getElementById('eraseModal');
+const eraseCanvas = document.getElementById('eraseCanvas');
+const eCtx = eraseCanvas.getContext('2d', { willReadFrequently:true });
+const brushSize = document.getElementById('brushSize');
+const toleranceSlider = document.getElementById('tolerance');
+const eraseReset = document.getElementById('eraseReset');
+const eraseApply = document.getElementById('eraseApply');
+const eraseCancel = document.getElementById('eraseCancel');
+const cropConfirm = document.getElementById('cropConfirm');
+
+// v17: 切換模式時，若離開裁切模式就移除虛線框（回到目前編輯結果）
+document.querySelectorAll('input[name="mode"]').forEach(r=>{
+  r.addEventListener('change', ()=>{
+    const mode = document.querySelector('input[name="mode"]:checked').value;
+    if(mode !== 'crop'){
+      // remove crop overlay
+      if(cropBaseImageData){ restoreSnapshot(); }
+      cropStart = cropEnd = null;
+    } else {
+      // entering crop: snapshot current edited pixels
+      snapshotCanvas();
+      drawCropRect();
+    }
+  });
+});
+
+
+let editingTargetImg = null;
+let originalImg = null;          // for Reset only
+let drawn = false;
+
+let lastX=0, lastY=0, drawing=false;
+let cropStart=null, cropEnd=null, cropping=false;
+
+/**
+ * IMPORTANT FIX (v14):
+ * - 裁切要基於「目前已編輯過」的畫面，不可回到原圖。
+ * - 因此 crop mode 會在開始裁切時把目前 canvas 的像素 snapshot 起來 (cropBaseImageData)
+ *   每次拖曳更新時先還原 snapshot 再畫框，避免框線被真正寫入輸出。
+ */
+let cropBaseImageData = null;
+
+function openEraseEditor(imgEl){
+  editingTargetImg = imgEl;
+  originalImg = new Image();
+  originalImg.onload = ()=>{
+    eraseCanvas.width  = Math.max(1, originalImg.naturalWidth);
+    eraseCanvas.height = Math.max(1, originalImg.naturalHeight);
+    eCtx.clearRect(0,0,eraseCanvas.width,eraseCanvas.height);
+    eCtx.drawImage(originalImg, 0, 0, eraseCanvas.width, eraseCanvas.height);
+    drawn = true;
+    cropStart = cropEnd = null;
+    cropping = false;
+    cropBaseImageData = null;
+    eraseModal.classList.add('show');
+  };
+  originalImg.src = imgEl.src;
+}
+
+function redrawOriginal(){
+  if(!originalImg) return;
+  eCtx.clearRect(0,0,eraseCanvas.width,eraseCanvas.height);
+  eCtx.drawImage(originalImg, 0, 0, eraseCanvas.width, eraseCanvas.height);
+}
+
+function snapshotCanvas(){
+  cropBaseImageData = eCtx.getImageData(0,0,eraseCanvas.width, eraseCanvas.height);
+}
+function restoreSnapshot(){
+  if(cropBaseImageData){
+    eCtx.putImageData(cropBaseImageData, 0, 0);
+  }
+}
+
+eraseCanvas.addEventListener('mousedown', (e)=>{
+  if(!drawn) return;
+  const mode = document.querySelector('input[name="mode"]:checked').value;
+  const rect = eraseCanvas.getBoundingClientRect();
+  lastX = e.clientX - rect.left;
+  lastY = e.clientY - rect.top;
+
+  if(mode==='erase'){
+    cropBaseImageData = null;
+    drawing = true;
+  }else if(mode==='select'){
+    cropBaseImageData = null;
+    floodSelect(Math.round(lastX), Math.round(lastY), Number(toleranceSlider.value));
+  }else if(mode==='crop'){
+    // v19: 開始新一輪裁切前，先移除上一個虛線框
+    if(cropBaseImageData){ restoreSnapshot(); }
+    snapshotCanvas();
+    cropping = true;
+    cropStart = {x:lastX, y:lastY};
+    cropEnd = {x:lastX, y:lastY};
+    drawCropRect();
+  }
+});
+
+window.addEventListener('mousemove', (e)=>{
+  if(!drawn) return;
+  const mode = document.querySelector('input[name="mode"]:checked').value;
+  const rect = eraseCanvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+
+  if(mode==='erase' && drawing){
+    eCtx.save();
+    eCtx.globalCompositeOperation = 'destination-out';
+    eCtx.beginPath();
+    eCtx.lineCap = 'round';
+    eCtx.lineJoin = 'round';
+    eCtx.lineWidth = Number(brushSize.value);
+    eCtx.moveTo(lastX,lastY);
+    eCtx.lineTo(x,y);
+    eCtx.stroke();
+    eCtx.restore();
+    lastX=x; lastY=y;
+  }else if(mode==='crop' && cropping){
+    cropEnd = {x,y};
+    drawCropRect();
+  }
+});
+
+window.addEventListener('mouseup', ()=>{
+  drawing=false;
+  if(cropping){
+    cropping=false;
+    // v17: 放開滑鼠後仍保留裁切虛線框（但不把框線烙印進輸出）
+    // drawCropRect() 會先還原 snapshot 再畫框，所以輸出仍乾淨
+    drawCropRect();
+  }
+});
+eraseReset.addEventListener('click', ()=>{
+  redrawOriginal();
+  cropStart=cropEnd=null;
+  cropBaseImageData = null;
+});
+
+function colorAt(data, w, x, y){
+  const i = (y*w + x)*4;
+  return [data[i], data[i+1], data[i+2], data[i+3]];
+}
+function withinTol(a,b,tol){
+  return Math.abs(a[0]-b[0])<=tol && Math.abs(a[1]-b[1])<=tol && Math.abs(a[2]-b[2])<=tol && Math.abs(a[3]-b[3])<=tol;
+}
+function floodSelect(sx, sy, tol=20){
+  const x = Math.max(0, Math.min(eraseCanvas.width-1, Math.round(sx)));
+  const y = Math.max(0, Math.min(eraseCanvas.height-1, Math.round(sy)));
+  const img = eCtx.getImageData(0,0,eraseCanvas.width,eraseCanvas.height);
+  const {data, width:w, height:h} = img;
+  const seed = colorAt(data, w, x, y);
+  const q = [[x,y]];
+  const visited = new Uint8Array(w*h);
+  const setTransparent = (px,py)=>{
+    const i = (py*w+px)*4;
+    data[i+3] = 0;
+  };
+  while(q.length){
+    const [cx,cy] = q.pop();
+    const idx = cy*w+cx;
+    if(visited[idx]) continue;
+    visited[idx]=1;
+    const col = colorAt(data,w,cx,cy);
+    if(!withinTol(col, seed, tol)) continue;
+    setTransparent(cx,cy);
+    if(cx>0) q.push([cx-1,cy]);
+    if(cx<w-1) q.push([cx+1,cy]);
+    if(cy>0) q.push([cx,cy-1]);
+    if(cy<h-1) q.push([cx,cy+1]);
+  }
+  eCtx.putImageData(img,0,0);
+}
+
+function drawCropRect(){
+  // restore edited pixels (snapshot) then draw rect overlay
+  restoreSnapshot();
+  if(!(cropStart && cropEnd)) return;
+  const x=Math.min(cropStart.x, cropEnd.x);
+  const y=Math.min(cropStart.y, cropEnd.y);
+  const w=Math.abs(cropEnd.x - cropStart.x);
+  const h=Math.abs(cropEnd.y - cropStart.y);
+  eCtx.save();
+  eCtx.strokeStyle='#00E5FF';
+  eCtx.lineWidth=2;
+  eCtx.setLineDash([6,4]);
+  eCtx.strokeRect(x,y,w,h);
+  eCtx.restore();
+}
+
+function getCroppedCanvasFromSelection(){
+  if(!(cropStart && cropEnd)) return null;
+
+  // Use snapshot as the true edited pixels without overlay
+  if(cropBaseImageData){
+    eCtx.putImageData(cropBaseImageData, 0, 0);
+  }
+
+  const x0 = Math.max(0, Math.min(cropStart.x, cropEnd.x));
+  const y0 = Math.max(0, Math.min(cropStart.y, cropEnd.y));
+  const w0 = Math.min(eraseCanvas.width - x0, Math.abs(cropEnd.x - cropStart.x));
+  const h0 = Math.min(eraseCanvas.height - y0, Math.abs(cropEnd.y - cropStart.y));
+  if(w0<=2 || h0<=2) return null;
+
+  const tmp = document.createElement('canvas');
+  tmp.width = w0; tmp.height = h0;
+  const tctx = tmp.getContext('2d');
+  const cut = eCtx.getImageData(x0,y0,w0,h0);
+  tctx.putImageData(cut, 0, 0);
+  return tmp;
+}
+
+// Apply to target tile image
+function applyCroppedToTarget(closeAfter){
+  if(!editingTargetImg) return;
+  const outCanvas = getCroppedCanvasFromSelection() || eraseCanvas;
+  const dataUrl = outCanvas.toDataURL('image/png');
+
+  const idx = parseInt(editingTargetImg.dataset.index, 10);
+  // update DOM image source (this is the ground truth for temp save)
+  editingTargetImg.src = dataUrl;
+
+  // keep position/size as-is
+  const x = Number(editingTargetImg.dataset.left || (parseFloat(editingTargetImg.style.left)||0));
+  const y = Number(editingTargetImg.dataset.top  || (parseFloat(editingTargetImg.style.top)||0));
+  const w = Number(editingTargetImg.dataset.width  || (parseFloat(editingTargetImg.style.width)||null));
+  const h = Number(editingTargetImg.dataset.height || (parseFloat(editingTargetImg.style.height)||null));
+
+  // IMPORTANT: sync tile dataURL (so temp save / download use edited image)
+  if(tiles[idx]){
+    const origName = (tiles[idx].data && tiles[idx].data.origName) ? tiles[idx].data.origName : (editingTargetImg.dataset.name||'');
+    tiles[idx].data = { dataURL: dataUrl, x, y, width:w, height:h, origName };
+  }
+
+  if(closeAfter){
+    eraseModal.classList.remove('show');
+    editingTargetImg = null;
+    originalImg = null;
+    cropBaseImageData = null;
+    cropStart = cropEnd = null;
+  }else{
+    // continue editing on the new result
+    const tmp = new Image();
+    tmp.onload = ()=>{
+      eraseCanvas.width  = Math.max(1, tmp.naturalWidth);
+      eraseCanvas.height = Math.max(1, tmp.naturalHeight);
+      eCtx.clearRect(0,0,eraseCanvas.width,eraseCanvas.height);
+      eCtx.drawImage(tmp, 0, 0, eraseCanvas.width, eraseCanvas.height);
+      cropBaseImageData = null;
+      cropStart = cropEnd = null;
+    };
+    tmp.src = dataUrl;
+  }
+}
+
+eraseApply.addEventListener('click', ()=>{
+  // ensure overlay removed
+  if(cropBaseImageData) restoreSnapshot();
+  applyCroppedToTarget(true);
+  showToast('已套用修改','ok');
+});
+
+cropConfirm.addEventListener('click', ()=>{
+  // ensure overlay removed
+  if(cropBaseImageData) restoreSnapshot();
+  applyCroppedToTarget(false);
+  showToast('已套用裁切（可繼續編輯）','ok',1500);
+});
+
+eraseCancel.addEventListener('click', ()=>{
+  document.getElementById('cancelNudge').classList.add('show');
+});
+
+document.getElementById('nudgeClose').addEventListener('click', ()=>{
+  document.getElementById('cancelNudge').classList.remove('show');
+  eraseModal.classList.remove('show');
+  editingTargetImg = null;
+  originalImg = null;
+  cropBaseImageData = null;
+  cropStart = cropEnd = null;
+});
+
+document.getElementById('nudgeImg').addEventListener('click', ()=>{
+  window.open('https://www.photoroom.com/tools/background-remover','_blank');
+});
+
+</script>
+</body>
+</html>
