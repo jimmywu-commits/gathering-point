@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>去背/裁切工具（可外掛）｜Standalone</title>
+  <style>
+    body{font-family:system-ui,-apple-system,"Noto Sans TC",Arial;margin:24px;background:#fafafa;color:#111}
+    h1{font-size:20px;margin:0 0 12px}
+    p{margin:6px 0 10px;max-width:80ch;line-height:1.6}
+    .demo-row{display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start}
+    .card{background:#fff;border:1px solid #eaeaea;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.05);padding:14px}
+    .imgbox{width:320px}
+    .imgbox img{max-width:100%;display:block;border-radius:10px;border:1px solid #eee}
+    .btn{background:#2176FF;color:#fff;border:0;border-radius:10px;padding:10px 12px;cursor:pointer;font-size:14px}
+    .btn:hover{background:#1b65db}
+
+    /* ========= Toast ========= */
+    .toast{
+      position:fixed;right:16px;top:16px;z-index:99999;background:#111;color:#fff;font-size:12px;
+      padding:8px 10px;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.3);opacity:.98;max-width:68ch;display:none
+    }
+    .toast.ok{background:#16a34a}
+    .toast.err{background:#dc2626}
+
+    /* ========= Modal / Editor ========= */
+    .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:9998;}
+    .modal.show{display:flex;}
+    .modal-panel{
+      background:#111;border-radius:12px;padding:12px;box-shadow:0 10px 30px rgba(0,0,0,.5);
+      color:#fff;display:flex;flex-direction:column;gap:8px;min-width:min(920px, calc(100vw - 24px));
+    }
+    .modal-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:14px}
+    .modal-toolbar label{font-size:12px;display:flex;align-items:center;gap:6px}
+    .modal-actions{display:flex;gap:10px;justify-content:flex-end;align-items:center}
+    .modal-actions button{border:0;border-radius:10px;padding:8px 10px;cursor:pointer;font-size:13px}
+    .btn-primary{background:#2ecc71;color:#111}
+    .btn-danger{background:#e74c3c;color:#fff}
+    .btn-ghost{background:#444;color:#fff}
+    .note{font-size:12px;color:#bbb}
+
+    .checkerboard{
+      position:relative;display:inline-block;border-radius:10px;overflow:auto;
+      background: conic-gradient(#ccc 25%, #fff 0 50%, #ccc 0 75%, #fff 0) 0 0/20px 20px;
+      padding:0;max-width:100%;max-height:70vh
+    }
+    #eraseCanvas{display:block;background:transparent;touch-action:none}
+    .hint{font-size:12px;color:#666}
+  </style>
+</head>
+<body>
+  <h1>去背/裁切工具（Standalone / 可外掛）</h1>
+  <p class="hint">
+    這份 HTML 內建一個可重用的 <b>Canvas 去背/裁切</b> 模組：<code>window.EraseCropEditor</code>。<br/>
+    你可以把下面的 <code>&lt;script&gt;</code> + <code>&lt;style&gt;</code> + Modal HTML 複製到其他頁面，或直接把這份檔案中的 JS 抽成單獨檔引用。
+  </p>
+
+  <div class="demo-row">
+    <div class="card imgbox">
+      <img id="demoImg" src="https://picsum.photos/id/1025/900/600" alt="demo" crossorigin="anonymous">
+      <div style="display:flex;gap:10px;margin-top:12px;align-items:center;flex-wrap:wrap">
+        <button class="btn" id="editBtn">去背/裁切</button>
+        <span class="hint">（示範：編輯這張圖並回寫到 img.src）</span>
+      </div>
+    </div>
+
+    <div class="card" style="max-width:560px">
+      <p style="margin-top:0"><b>如何在你的其他 HTML「像外掛」一樣用</b></p>
+      <ol style="margin:8px 0 0;line-height:1.7">
+        <li>把本檔案中的 <b>Modal HTML</b>（id=eraseModal）貼到你頁面底部（body 結尾）。</li>
+        <li>把本檔案的 <b>CSS（Modal/Toast/Checkerboard）</b>貼到你的樣式表。</li>
+        <li>把本檔案的 <b>JS</b>貼到你的頁面，或抽成 <code>erase-crop-editor.js</code> 引用。</li>
+        <li>初始化：<code>EraseCropEditor.init()</code> 或 <code>EraseCropEditor.bindButton(buttonEl, imgEl)</code></li>
+      </ol>
+      <pre style="background:#0b0b0b;color:#d6d6d6;border-radius:12px;padding:12px;overflow:auto;margin-top:12px;font-size:12px"><code>
+// 方式 A：用按鈕綁一張圖
+EraseCropEditor.bindButton(
+  document.querySelector('#myEditBtn'),
+  document.querySelector('#myImage')
+);
+
+// 方式 B：自動綁定（找 data-erasecrop-target 指向的 img）
+EraseCropEditor.init();</code></pre>
+      <p class="note">支援三模式：擦除（筆刷）、智慧選取（魔術棒/容差）、裁切（框選）。</p>
+    </div>
+  </div>
+
+  <!-- ===== Toast ===== -->
+  <div id="toast" class="toast"></div>
+
+  <!-- ===== 去背/裁切 Modal（外掛核心）===== -->
+  <div class="modal" id="eraseModal" aria-hidden="true">
+    <div class="modal-panel">
+      <div class="modal-toolbar">
+        <label><input type="radio" name="mode" value="erase" checked> 擦除</label>
+        <label><input type="radio" name="mode" value="select"> 智慧選取</label>
+        <label><input type="radio" name="mode" value="crop"> 裁切</label>
+        <label>筆刷：<input id="brushSize" type="range" min="5" max="120" value="40"></label>
+        <label>容差：<input id="tolerance" type="range" min="0" max="80" value="20"></label>
+        <span class="note">裁切：拖曳框選；智慧選取：點擊或多點；擦除：拖曳</span>
+      </div>
+
+      <div class="checkerboard">
+        <canvas id="eraseCanvas" width="800" height="400"></canvas>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn-ghost" id="eraseReset" type="button">重作</button>
+        <button class="btn-primary" id="cropConfirm" type="button" title="只套用裁切，不關閉視窗">確定裁切</button>
+        <button class="btn-primary" id="eraseApply" type="button">完成</button>
+        <button class="btn-danger" id="eraseCancel" type="button">取消</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+/**
+ * EraseCropEditor
+ * - Standalone 可重用：只依賴原生 JS + Canvas
+ * - 對外 API：
+ *    - EraseCropEditor.open(imgEl, { onApply?(dataUrl){...} })
+ *    - EraseCropEditor.bindButton(btnEl, imgEl, opts?)
+ *    - EraseCropEditor.init()：自動找 [data-erasecrop-target="#imgId"] 的按鈕
+ */
+(function(){
+  function showToast(msg, type='ok', ms=1800){
+    const t = document.getElementById('toast');
+    if(!t) return;
+    t.textContent = msg;
+    t.className = 'toast ' + (type==='ok' ? 'ok' : 'err');
+    t.style.display = 'block';
+    clearTimeout(showToast._tid);
+    showToast._tid = setTimeout(()=>{ t.style.display='none'; }, ms);
+  }
+
+  const eraseModal = document.getElementById('eraseModal');
+  const eraseCanvas = document.getElementById('eraseCanvas');
+  const eCtx = eraseCanvas.getContext('2d', { willReadFrequently:true });
+  const brushSize = document.getElementById('brushSize');
+  const toleranceSlider = document.getElementById('tolerance');
+  const eraseReset = document.getElementById('eraseReset');
+  const eraseApply = document.getElementById('eraseApply');
+  const eraseCancel = document.getElementById('eraseCancel');
+  const cropConfirm = document.getElementById('cropConfirm');
+
+  let editingTargetImg = null;
+  let originalImg = null;
+  let drawn = false;
+
+  let lastX=0, lastY=0, drawing=false;
+  let cropStart=null, cropEnd=null, cropping=false;
+
+  let onApplyCb = null;
+
+  function getMode(){
+    return document.querySelector('input[name="mode"]:checked')?.value || 'erase';
+  }
+
+  function open(imgEl, opts={}){
+    if(!imgEl) return;
+    editingTargetImg = imgEl;
+    onApplyCb = (typeof opts.onApply === 'function') ? opts.onApply : null;
+
+    originalImg = new Image();
+    originalImg.crossOrigin = 'anonymous';
+    originalImg.onload = ()=>{
+      eraseCanvas.width  = Math.max(1, originalImg.naturalWidth);
+      eraseCanvas.height = Math.max(1, originalImg.naturalHeight);
+      eCtx.clearRect(0,0,eraseCanvas.width,eraseCanvas.height);
+      eCtx.drawImage(originalImg, 0, 0, eraseCanvas.width, eraseCanvas.height);
+      drawn = true;
+      cropStart = cropEnd = null; cropping=false;
+      eraseModal.classList.add('show');
+      eraseModal.setAttribute('aria-hidden','false');
+    };
+    originalImg.src = imgEl.currentSrc || imgEl.src;
+  }
+
+  function close(){
+    eraseModal.classList.remove('show');
+    eraseModal.setAttribute('aria-hidden','true');
+    editingTargetImg = null;
+    originalImg = null;
+    drawn = false;
+    cropStart = cropEnd = null; cropping=false;
+    onApplyCb = null;
+  }
+
+  function redrawOriginal(){
+    if(!originalImg) return;
+    eCtx.clearRect(0,0,eraseCanvas.width,eraseCanvas.height);
+    eCtx.drawImage(originalImg, 0, 0, eraseCanvas.width, eraseCanvas.height);
+  }
+
+  function colorAt(data, w, x, y){
+    const i = (y*w + x)*4;
+    return [data[i], data[i+1], data[i+2], data[i+3]];
+  }
+  function withinTol(a,b,tol){
+    return Math.abs(a[0]-b[0])<=tol &&
+           Math.abs(a[1]-b[1])<=tol &&
+           Math.abs(a[2]-b[2])<=tol &&
+           Math.abs(a[3]-b[3])<=tol;
+  }
+  function floodSelect(sx, sy, tol=20){
+    const x = Math.max(0, Math.min(eraseCanvas.width-1, Math.round(sx)));
+    const y = Math.max(0, Math.min(eraseCanvas.height-1, Math.round(sy)));
+    const img = eCtx.getImageData(0,0,eraseCanvas.width,eraseCanvas.height);
+    const {data, width:w, height:h} = img;
+    const seed = colorAt(data, w, x, y);
+    const q = [[x,y]];
+    const visited = new Uint8Array(w*h);
+
+    const setTransparent = (px,py)=>{
+      const i = (py*w+px)*4;
+      data[i+3] = 0;
+    };
+
+    while(q.length){
+      const [cx,cy] = q.pop();
+      const idx = cy*w+cx;
+      if(visited[idx]) continue;
+      visited[idx]=1;
+
+      const col = colorAt(data,w,cx,cy);
+      if(!withinTol(col, seed, tol)) continue;
+
+      setTransparent(cx,cy);
+      if(cx>0) q.push([cx-1,cy]);
+      if(cx<w-1) q.push([cx+1,cy]);
+      if(cy>0) q.push([cx,cy-1]);
+      if(cy<h-1) q.push([cx,cy+1]);
+    }
+    eCtx.putImageData(img,0,0);
+  }
+
+  function drawCropRect(){
+    redrawOriginal();
+    if(!(cropStart && cropEnd)) return;
+    const x=Math.min(cropStart.x, cropEnd.x);
+    const y=Math.min(cropStart.y, cropEnd.y);
+    const w=Math.abs(cropEnd.x - cropStart.x);
+    const h=Math.abs(cropEnd.y - cropStart.y);
+
+    eCtx.save();
+    eCtx.strokeStyle='#00E5FF';
+    eCtx.lineWidth=2;
+    eCtx.setLineDash([6,4]);
+    eCtx.strokeRect(x,y,w,h);
+    eCtx.restore();
+  }
+
+  function getCroppedCanvasFromSelection(){
+    if(!(cropStart && cropEnd)) return null;
+    redrawOriginal();
+    const x = Math.max(0, Math.min(cropStart.x, cropEnd.x));
+    const y = Math.max(0, Math.min(cropStart.y, cropEnd.y));
+    const w = Math.min(eraseCanvas.width - x, Math.abs(cropEnd.x - cropStart.x));
+    const h = Math.min(eraseCanvas.height - y, Math.abs(cropEnd.y - cropStart.y));
+    if(w<=2 || h<=2) return null;
+
+    const tmp = document.createElement('canvas');
+    tmp.width = w; tmp.height = h;
+    const tctx = tmp.getContext('2d');
+    const cut = eCtx.getImageData(x,y,w,h);
+    tctx.putImageData(cut, 0, 0);
+    return tmp;
+  }
+
+  function applyToTarget(closeAfter){
+    if(!editingTargetImg) return;
+    const outCanvas = getCroppedCanvasFromSelection() || eraseCanvas;
+    const dataUrl = outCanvas.toDataURL('image/png');
+
+    if(onApplyCb){
+      onApplyCb(dataUrl);
+    }else{
+      editingTargetImg.src = dataUrl;
+    }
+
+    if(closeAfter) close();
+    else{
+      const tmp = new Image();
+      tmp.onload = ()=>{
+        eraseCanvas.width  = Math.max(1, tmp.naturalWidth);
+        eraseCanvas.height = Math.max(1, tmp.naturalHeight);
+        eCtx.clearRect(0,0,eraseCanvas.width,eraseCanvas.height);
+        eCtx.drawImage(tmp, 0, 0, eraseCanvas.width, eraseCanvas.height);
+        cropStart = cropEnd = null;
+      };
+      tmp.src = dataUrl;
+    }
+  }
+
+  function getCanvasXY(evt){
+    const rect = eraseCanvas.getBoundingClientRect();
+    return { x: (evt.clientX - rect.left), y: (evt.clientY - rect.top) };
+  }
+
+  eraseCanvas.addEventListener('mousedown', (e)=>{
+    if(!drawn) return;
+    const mode = getMode();
+    const {x,y} = getCanvasXY(e);
+    lastX=x; lastY=y;
+
+    if(mode==='erase'){
+      drawing = true;
+    }else if(mode==='select'){
+      floodSelect(Math.round(x), Math.round(y), Number(toleranceSlider.value));
+    }else if(mode==='crop'){
+      cropping = true;
+      cropStart = {x, y};
+      cropEnd   = {x, y};
+      drawCropRect();
+    }
+  });
+
+  window.addEventListener('mousemove', (e)=>{
+    if(!drawn) return;
+    const mode = getMode();
+    const {x,y} = getCanvasXY(e);
+
+    if(mode==='erase' && drawing){
+      eCtx.save();
+      eCtx.globalCompositeOperation = 'destination-out';
+      eCtx.beginPath();
+      eCtx.lineCap = 'round';
+      eCtx.lineJoin = 'round';
+      eCtx.lineWidth = Number(brushSize.value);
+      eCtx.moveTo(lastX,lastY);
+      eCtx.lineTo(x,y);
+      eCtx.stroke();
+      eCtx.restore();
+      lastX=x; lastY=y;
+    }else if(mode==='crop' && cropping){
+      cropEnd = {x,y};
+      drawCropRect();
+    }
+  });
+
+  window.addEventListener('mouseup', ()=>{
+    drawing=false;
+    cropping=false;
+  });
+
+  eraseReset.addEventListener('click', ()=>{
+    redrawOriginal();
+    cropStart=cropEnd=null;
+    showToast('已重作','ok',900);
+  });
+
+  eraseApply.addEventListener('click', ()=>{
+    applyToTarget(true);
+    showToast('已套用','ok',1000);
+  });
+
+  cropConfirm.addEventListener('click', ()=>{
+    applyToTarget(false);
+    showToast('已套用裁切（可繼續編輯）','ok',1300);
+  });
+
+  eraseCancel.addEventListener('click', ()=>{
+    close();
+    showToast('已取消','err',900);
+  });
+
+  eraseModal.addEventListener('mousedown', (e)=>{
+    if(e.target === eraseModal){
+      close();
+      showToast('已關閉','ok',800);
+    }
+  });
+
+  const api = {
+    open,
+    close,
+    bindButton: (btnEl, imgEl, opts={})=>{
+      if(!btnEl || !imgEl) return;
+      btnEl.addEventListener('click', ()=>open(imgEl, opts));
+    },
+    init: ()=>{
+      document.querySelectorAll('[data-erasecrop-target]').forEach(btn=>{
+        const sel = btn.getAttribute('data-erasecrop-target');
+        const img = sel ? document.querySelector(sel) : null;
+        if(img) api.bindButton(btn, img);
+      });
+    },
+    toast: showToast
+  };
+
+  window.EraseCropEditor = api;
+
+  api.bindButton(document.getElementById('editBtn'), document.getElementById('demoImg'));
+})();
+</script>
+</body>
+</html>
