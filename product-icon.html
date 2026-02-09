@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Tile Grid - v13（編輯功能保留 + 暫存含編輯後圖片）</title>
+<title>Icon v2</title>
 <style>
 :root{font-family:system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;}
 body{margin:0;background:#f2f2f2;padding:20px;display:flex;flex-direction:column;align-items:center;color:#111;}
@@ -220,17 +220,25 @@ function placeImageAutoFit(tileObj, dataURL, name){
   img.src=dataURL;
   img.dataset.name=name||'';
   img.onload=()=>{
-    const scale=Math.min(max/img.naturalWidth, max/img.naturalHeight, 1);
+    const fixedScale = 0.20; // 固定縮放為 20%
+    const scale = fixedScale;
     const w=Math.round(img.naturalWidth*scale);
     const h=Math.round(img.naturalHeight*scale);
-    const left=Math.round((max-w)/2);
-    const top=Math.round((max-h)/2);
-    applyImgStyle(img, left, top, w, h);
+    // 若 15% 仍超出 188，則再以 188 為上限等比縮小（避免溢出框外）
+    let w2=w, h2=h;
+    if(w2>max || h2>max){
+      const clamp=Math.min(max/w2, max/h2);
+      w2=Math.round(w2*clamp);
+      h2=Math.round(h2*clamp);
+    }
+    const left=Math.round((max-w2)/2);
+    const top=Math.round((max-h2)/2);
+    applyImgStyle(img, left, top, w2, h2);
     img.dataset.index = tileObj.tile.dataset.index;
     setupInteractions(img);
     circle.appendChild(img);
     tileObj.label.textContent = name||'';
-    tileObj.data = {dataURL, x:left, y:top, width:w, height:h, origName:name||''};
+    tileObj.data = {dataURL, x:left, y:top, width:w2, height:h2, origName:name||''};
   };
 }
 
