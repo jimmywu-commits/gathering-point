@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>蝦拼集點換好禮 BN v1</title>
+<title>蝦拼集點換好禮 BN v2</title>
 <style>
 @font-face{
   font-family:'ShopeeNotoSansRegular';
@@ -303,6 +303,23 @@ function sanitizeFilename(name){
 function normalizeKey(s){
   return (s||'').toLowerCase().replace(/\.[a-z0-9]+$/i,'').replace(/[^a-z0-9\u4e00-\u9fff]+/gi,'');
 }
+
+function convertCnNums(str){
+  let s = (str ?? '').toString();
+  // 保護排除詞：不把「三星」「百年」內的字做轉換
+  const prot = [
+    ['三星','__PROT_SAMSUNG__'],
+    ['百年','__PROT_CENTURY__']
+  ];
+  for(const [k,v] of prot){ s = s.split(k).join(v); }
+
+  const map = {'一':'1','二':'2','三':'3','四':'4','五':'5','六':'6','七':'7','八':'8','九':'9','十':'10'};
+  s = s.replace(/[一二三四五六七八九十]/g, ch => map[ch] ?? ch);
+
+  for(const [k,v] of prot){ s = s.split(v).join(k); }
+  return s;
+}
+
 
 /* ========= Render ========= */
 function ensureDefaultItems(){
@@ -678,7 +695,12 @@ sheetInput.addEventListener('change', async e=>{
         date = m[1];
         name = (m[2]||'').trim();
       }
-      const matchKey = jLines[k] || ''; // 用於比對圖片檔名（可含日期前綴）
+
+      // v43: 工單匯入時，將中文數字 一二三四五六七八九十 轉成阿拉伯數字（排除「三星」「百年」）
+      name = convertCnNums(name);
+
+      let matchKey = jLines[k] || ''; // 用於比對圖片檔名（可含日期前綴）
+      matchKey = convertCnNums(matchKey);
       parsed.push({date, name, matchKey});
     }
 
@@ -1314,4 +1336,3 @@ document.getElementById('nudgeImg').addEventListener('click', ()=>{
 </script>
 </body>
 </html>
-
