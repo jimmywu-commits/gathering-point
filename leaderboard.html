@@ -351,6 +351,46 @@ function normalizeKey(s){
   return (s||'').toLowerCase().replace(/\.[a-z0-9]+$/i,'').replace(/[^a-z0-9\u4e00-\u9fff]+/gi,'');
 }
 
+function normalizeFileName(s){
+  return String(s || '').replace(/\\/g,'/').split('/').pop().trim();
+}
+function getExtension(name){
+  const m = String(name || '').match(/\.([a-z0-9]+)$/i);
+  return m ? m[1].toLowerCase() : '';
+}
+function scoreImageMatch(fileName, rawKey){
+  const fileFull = normalizeFileName(fileName);
+  const keyFull = normalizeFileName(rawKey);
+  if(!fileFull || !keyFull) return -1;
+
+  if(fileFull === keyFull) return 100;
+
+  const fileNormFull = normalizeKey(fileFull);
+  const keyNormFull = normalizeKey(keyFull);
+  if(fileNormFull && keyNormFull && fileNormFull === keyNormFull) return 95;
+
+  const fileBase = fileFull.replace(/\.[a-z0-9]+$/i, '');
+  const keyBase = keyFull.replace(/\.[a-z0-9]+$/i, '');
+  const fileNorm = normalizeKey(fileBase);
+  const keyNorm = normalizeKey(keyBase);
+  if(fileNorm && keyNorm && fileNorm === keyNorm) return 90;
+
+  const fileExt = getExtension(fileFull);
+  const keyExt = getExtension(keyFull);
+  if(fileNorm && keyNorm && (fileNorm.includes(keyNorm) || keyNorm.includes(fileNorm))){
+    return (fileExt && keyExt && fileExt === keyExt) ? 80 : 70;
+  }
+
+  return -1;
+}
+function pickMatchKeyForRow(rows, targetRowIndex, rowOffset, fallbackKeys){
+  const row = rows[targetRowIndex + rowOffset] || [];
+  const rowKeyRaw = String(row[9] || '').trim();
+  const rowKey = convertCnNums(rowKeyRaw);
+  const fallback = String(fallbackKeys[rowOffset] || '').trim();
+  return rowKey || fallback;
+}
+
 function convertCnNums(str){
   let s = (str ?? '').toString();
   // 保護排除詞：不把「三星」「百年」內的字做轉換
@@ -399,6 +439,11 @@ render();
     if(matches && matches.length){
       return matches.map(x => x.trim()).filter(Boolean);
     }
+
+    // 後備：支援分號、頓號、逗號等分隔
+    const parts = s.split(/[;,，、]+/).map(x => x.trim()).filter(Boolean);
+    if(parts.length > 1) return parts;
+
     return [s];
   }
 
@@ -707,37 +752,46 @@ imgInput.addEventListener('change', async e=>{
 
   const unmatchedFiles = [];
 
-  // 1:1 嚴格對圖：先比 J 欄完整檔名，完全一致才套用
+  // 優先使用 J 欄檔名做精準比對；若仍找不到，再做安全的正規化比對
+  const usedItemIndexes = new Set();
   for(const f of files){
-    const fkRaw = String(f.name || '').trim();
+    const fkRaw = normalizeFileName(f.name || '');
     let targetIdx = -1;
+    let bestScore = -1;
 
     for(const it of itemKeys){
+      if(usedItemIndexes.has(it.i)) continue;
       const mkRaw = String(it.matchKeyRaw || '').trim();
-      if(mkRaw && fkRaw === mkRaw){
+      if(!mkRaw) continue;
+      const score = scoreImageMatch(fkRaw, mkRaw);
+      if(score > bestScore){
+        bestScore = score;
         targetIdx = it.i;
-        break;
       }
     }
 
-    // 若 J 欄空白，才允許用商品名完整相等
+    // 若 J 欄空白，才允許退回商品名比對
     if(targetIdx < 0){
       for(const it of itemKeys){
+        if(usedItemIndexes.has(it.i)) continue;
         const mkRaw = String(it.matchKeyRaw || '').trim();
         const nkRaw = String(it.nameKeyRaw || '').trim();
-        if(!mkRaw && nkRaw && fkRaw === nkRaw){
+        if(mkRaw || !nkRaw) continue;
+        const score = scoreImageMatch(fkRaw, nkRaw);
+        if(score > bestScore){
+          bestScore = score;
           targetIdx = it.i;
-          break;
         }
       }
     }
 
     // 找不到就先記下，不自動亂塞
-    if(targetIdx < 0){
+    if(targetIdx < 0 || bestScore < 70){
       unmatchedFiles.push(f.name);
       continue;
     }
 
+    usedItemIndexes.add(targetIdx);
     await new Promise(res=>{
       const r=new FileReader();
       r.onload=async ev=>{ const cleaned = await removeWhiteBackground(ev.target.result); setItemImage(targetIdx, cleaned, f.name, true);
@@ -750,7 +804,7 @@ imgInput.addEventListener('change', async e=>{
   if(unmatchedFiles.length){
     showToast('有圖片未套用：' + unmatchedFiles.join('、'), 'err', 3200);
   }else{
-    showToast('圖片已按 J 欄完整檔名 1:1 套用','ok',1800);
+    showToast('圖片已完成對圖套用','ok',1800);
   }
   imgInput.value='';
 });
@@ -814,6 +868,7 @@ sheetInput.addEventListener('change', async e=>{
 
     const iCell = (targetRow[8]||'').toString(); // I 欄：日期 + 顯示文字（同一格內換行）
     const iLines = iCell.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+    const jInlineKeys = splitImageKeys(targetRow[9] || '');
 
     const n = Math.min(6, iLines.length); // 最多 6 格版型
     if(n === 0){
@@ -837,9 +892,10 @@ sheetInput.addEventListener('change', async e=>{
       // v43: 工單匯入時，將中文數字 一二三四五六七八九十 轉成阿拉伯數字（排除「三星」「百年」）
       name = convertCnNums(name);
 
-      // J 欄改為往下吃：J36、J37、J38、J39...
-      const jRow = rows[targetRowIndex + k] || [];
-      let matchKey = (jRow[9] || '').toString().trim();
+      // 同時支援兩種工單格式：
+      // 1) J 欄同一格內斷行
+      // 2) 從設定列開始往下逐列讀取 J 欄
+      let matchKey = pickMatchKeyForRow(rows, targetRowIndex, k, jInlineKeys);
       matchKey = convertCnNums(matchKey);
       parsed.push({date, name, matchKey});
     }
@@ -975,27 +1031,35 @@ btnDownloadPNG.addEventListener('click', async ()=>{
     await ensureFontLoaded();
     const canvas = document.createElement('canvas');
     canvas.width = 578;
-// auto height: 2 rows = 600, 3 rows expand
-const rowsCount = Math.ceil(items.length / 2);
-const contentHeight =
-  paddingTop +
-  (rowsCount * cardH) +
-  ((rowsCount - 1) * rowGap) +
-  paddingBottom;
 
-canvas.height = Math.max(600, contentHeight);
+    // layout params (match CSS)
+    const paddingLeft = 42;
+    const paddingTop = 56;
+    const paddingBottom = 29;
+    const cols = 2;
+    const colGap = 14;
+    const rowGap = 47;
+    const cardW = 240;
+    const cardH = 234;
+
+    // auto height: 2 rows = 600, 3 rows expand
+    const rowsCount = Math.ceil(Math.max(items.length, 4) / 2);
+    const contentHeight =
+      paddingTop +
+      (rowsCount * cardH) +
+      ((rowsCount - 1) * rowGap) +
+      paddingBottom;
+
+    canvas.height = Math.max(600, contentHeight);
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0,0,canvas.width,canvas.height);
 
     // rounded bg
-    roundRect(ctx, 0,0,578,600,44);
+    roundRect(ctx, 0,0,578,canvas.height,44);
     ctx.fillStyle = '#F04A2A';
     ctx.fill();
 
     // layout params (match CSS)
-    const paddingLeft=42, paddingTop=56, colGap = (2===2?14:7), rowGap=47;
-    const cols = 2;
-    const cardW = (cols===2 ? 240 : 160), cardH=234;
     const rows = Math.ceil(items.length / cols);
     const totalW = cols*cardW + (cols-1)*colGap;
     let startX = paddingLeft;
@@ -1491,7 +1555,7 @@ window.__leaderboardFieldRule = {
 </script>
 
 <div style="position:fixed;left:12px;bottom:12px;background:#111;color:#fff;font-size:12px;padding:8px 10px;border-radius:8px;z-index:99999;opacity:.9">
-  工單規則：I欄＝日期＋文字（同一格內每行一筆）｜J欄＝圖檔名稱（從設定列開始往下逐列讀取，如 J36、J37、J38、J39）｜圖片對應＝J欄完整檔名 1:1 完全相等｜畫面高度＝最小 600，依排數自動增加
+  工單規則：I欄＝日期＋文字（同一格內每行一筆）｜J欄＝圖檔名稱（支援同一格內每行一筆，或從設定列開始往下逐列讀取）｜圖片對應＝優先用 J 欄檔名精準比對，必要時做安全正規化比對｜畫面高度＝最小 600，依排數自動增加
 </div>
 
 </body>
