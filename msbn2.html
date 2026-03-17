@@ -587,14 +587,46 @@ function sanitizeFilename(name){
   return (name||'image').replace(/[\/\\?%*:|"<>]/g,'_');
 }
 function normalizeKey(s){
-  return (s||'').toLowerCase().replace(/\.[a-z0-9]+$/i,'').replace(/[^a-z0-9\u4e00-\u9fff]+/gi,'');
+  let t = String(s||'').toLowerCase().trim();
+
+  // 若副檔名後面又被人手加了字，只保留到副檔名為止
+  const m = t.match(/^(.*?\.(png|jpe?g|webp|gif|bmp|svg))/i);
+  if(m) t = m[1];
+
+  return t
+    .replace(/\.[a-z0-9]+$/i,'')
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/gi,'');
+}
+
+function sanitizeAssetName(s){
+  let t = String(s||'').trim();
+  if(!t) return '';
+
+  // 統一換行 / 路徑分隔
+  t = t.replace(/\r/g, '\n').trim();
+
+  // 先找整段文字中最後一個看起來像檔名的片段
+  const fileMatches = t.match(/[^\\\/\n]+?\.(png|jpe?g|webp|gif|bmp|svg)/ig);
+  if(fileMatches && fileMatches.length){
+    t = fileMatches[fileMatches.length - 1].trim();
+  }else{
+    // 沒有副檔名時，拿最後一行當關鍵字
+    const lines = t.split(/\n+/).map(x=>x.trim()).filter(Boolean);
+    if(lines.length) t = lines[lines.length - 1];
+  }
+
+  // 若副檔名後仍有多餘文字，只保留到副檔名為止
+  const m = t.match(/^(.*?\.(png|jpe?g|webp|gif|bmp|svg))/i);
+  if(m) t = m[1].trim();
+
+  return t;
 }
 
 /* ========= Render ========= */
 function ensureDefaultItems(){
   if(items.length) return;
   // 預設 placeholders（未上傳工單前）
-  items = Array.from({length:6}, (_,i)=>({date:'', name:'', coreName:'', matchKey:'', logoKey:'', prizeKey:'', imageDataURL:'', logoDataURL:'', x:0,y:0,width:0,height:0, fileName:'', logoX:0, logoY:0, logoW:0, logoH:0, logoFileName:'', single:false}));
+  items = Array.from({length:6}, (_,i)=>({date:'', name:'', coreName:'', matchKey:'', logoKey:'', prizeKey:'', logoAssetName:'', productAssetName:'', imageDataURL:'', logoDataURL:'', x:0,y:0,width:0,height:0, fileName:'', logoX:0, logoY:0, logoW:0, logoH:0, logoFileName:'', single:false}));
 }
 ensureDefaultItems();
 render();
@@ -998,156 +1030,115 @@ imgInput.addEventListener('change', async e=>{
   updateStatus('上傳圖片中('+files.length+'張)');
   files.sort((a,b)=> (a.webkitRelativePath||a.name).localeCompare(b.webkitRelativePath||b.name));
 
-  // build candidate keys (商品圖：prizeKey/matchKey + coreName；Logo：logoKey)
   const itemKeys = items.map((it,i)=>({
     i,
-    matchKey: normalizeKey(it.prizeKey || it.matchKey || ''),
-    nameKey: normalizeKey(it.coreName || it.name || ''),
-    logoKey: normalizeKey(it.logoKey || '')
+    logoAssetKey: normalizeKey(it.logoAssetName || it.logoKey || ''),
+    productAssetKey: normalizeKey(it.productAssetName || it.prizeKey || it.matchKey || '')
   }));
 
+  const usedProdIdx = new Set();
   const skipped = [];
-  const skippedLogo = [];
 
-  // match each file to best item by overlap score
-  for(const f of files){
-    const fk = normalizeKey(f.name);
+  function exactishScore(target, fk){
+    if(!target || !fk) return -1;
+    if(target === fk) return 1000;
+    if(fk.includes(target) || target.includes(fk)) return 950 + Math.min(target.length, fk.length);
 
-    // 決定此檔要當 Logo 還是 商品圖：看與各品項「logo檔名/品名」的重疊分數
-    let bestLogo = {score:-1, idx:-1};
-    let bestProd = {score:-1, idx:-1, strong:false};
+    let prefix = 0;
+    const L = Math.min(target.length, fk.length);
+    while(prefix < L && target[prefix] === fk[prefix]) prefix++;
+    if(prefix >= 4) return 900 + prefix;
 
-    for(const it of itemKeys){
-      const lk = it.logoKey;
-      if(lk){
-        const hit = (fk.includes(lk) || lk.includes(fk));
-        const s = hit ? Math.min(fk.length, lk.length) : overlapScore(lk, fk);
-        if(s > bestLogo.score) bestLogo = {score:s, idx:it.i};
-      }
+    // 允許短關鍵字（如 KFC / PizzaHut / 肯德基 / 必勝客）命中完整檔名
+    if(target.length >= 2 && fk.includes(target)) return 890 + target.length;
+    if(fk.length >= 2 && target.includes(fk)) return 885 + fk.length;
 
-      const mk = it.matchKey;
-      if(mk){
-        const hit2 = (fk.includes(mk) || mk.includes(fk));
-        const s2 = hit2 ? Math.min(fk.length, mk.length) : overlapScore(mk, fk);
-        if(s2 > bestProd.score) bestProd = {score:s2, idx:it.i, strong:hit2};
-      }else if(it.nameKey){
-        const s3 = overlapScore(it.nameKey, fk);
-        if(s3 > bestProd.score) bestProd = {score:s3, idx:it.i, strong:false};
-      }
+    for(let i=0;i<target.length-3;i++){
+      const seg = target.slice(i,i+4);
+      if(seg && fk.includes(seg)) return 880;
     }
+    return -1;
+  }
 
-    const isPrizeFile = fk.startsWith('prize');
-    const treatAsLogo = !isPrizeFile && (bestLogo.score >= 2) && (bestLogo.score >= bestProd.score);
-
-    // ---------- Logo files ----------
-    if(treatAsLogo){
-      let best = {score: -1, idx: -1};
-
-      for(const it of itemKeys){
-        const lk = it.logoKey;
-        if(!lk) continue;
-
-        // 部分比對：任一方包含另一方
-        const hit = (fk.includes(lk) || lk.includes(fk));
-        if(hit){
-          const score = Math.min(fk.length, lk.length);
-          if(score > best.score) best = {score, idx: it.i};
-          continue;
-        }
-        const score2 = overlapScore(lk, fk);
-        if(score2 > best.score) best = {score: score2, idx: it.i};
-      }
-
-      if(best.idx < 0 || best.score < 2){
-        skippedLogo.push(f.name);
-        continue;
-      }
-
-      await new Promise(res=>{
-        const r=new FileReader();
-        r.onload=async ev=>{
-          // logo 通常不需要去背，但為了保持一致也套用 removeWhiteBackground（若想保留原始可移除這行）
-          const cleaned = ev.target.result; // logo: keep original, no background removal
-          items[best.idx].logoDataURL = cleaned;
-          items[best.idx].logoFileName = f.name;
-          items[best.idx].logoW = 0; items[best.idx].logoH = 0; // trigger aspect-fit init
-          items[best.idx].logoX = 0; items[best.idx].logoY = 0;
-          res();
-        };
-        r.readAsDataURL(f);
-      });
-
-      continue;
-    }
-
-    // ---------- Prize / product image files ----------
-    let best = bestProd;
-
-    for(const it of itemKeys){
-      const mk = it.matchKey;
-      if(mk){
-        // 部分比對：任一方包含另一方
-        const hit = (fk.includes(mk) || mk.includes(fk));
-        if(hit){
-          const score = Math.min(fk.length, mk.length); // longer match wins
-          if(score > best.score) best = {score, idx: it.i, strong:true};
-          continue;
-        }
-        // 次要：用 overlapScore 做寬鬆比對（避免檔名含日期前綴）
-        const score2 = overlapScore(mk, fk);
-        if(score2 > best.score) best = {score: score2, idx: it.i, strong:false};
-      }else if(it.nameKey){
-        const score3 = overlapScore(it.nameKey, fk);
-        if(score3 > best.score) best = {score: score3, idx: it.i, strong:false};
-      }
-    }
-
-    // if no good match, put into first empty slot
-    let targetIdx = (best.score>=2) ? best.idx : items.findIndex(x=>!x.imageDataURL);
-    if(targetIdx < 0) targetIdx = 0;
-
-    // 品名核對：若不是 strong match（純檔名包含），就要求檔名與品名至少有基本重疊
-    const nameKey = itemKeys[targetIdx]?.nameKey || '';
-    const nameOk = !nameKey ? true : (overlapScore(nameKey, fk) >= 2);
-
-    if(!best.strong && !nameOk){
-      skipped.push({file:f.name, idx: targetIdx});
-      continue;
-    }
-
+  async function assignLogo(idx, file){
     await new Promise(res=>{
       const r=new FileReader();
-      r.onload=async ev=>{ const cleaned = await removeWhiteBackground(ev.target.result); setItemImage(targetIdx, cleaned, f.name, true); res(); };
-      r.readAsDataURL(f);
+      r.onload=ev=>{
+        items[idx].logoDataURL = ev.target.result;
+        items[idx].logoFileName = file.name;
+        items[idx].logoW = 0; items[idx].logoH = 0;
+        items[idx].logoX = 0; items[idx].logoY = 0;
+        res();
+      };
+      r.readAsDataURL(file);
     });
   }
 
-  // 若同一個 logoKey 需要重覆使用：自動把已匹配到的 logo 套用到其他同 logoKey 的格子
-  const logoByKey = {};
-  items.forEach(it=>{
-    const k = normalizeKey(it.logoKey||'');
-    if(k && it.logoDataURL) logoByKey[k] = {url: it.logoDataURL, file: it.logoFileName||''};
-  });
-  items.forEach(it=>{
-    const k = normalizeKey(it.logoKey||'');
-    if(k && !it.logoDataURL && logoByKey[k]){
-      it.logoDataURL = logoByKey[k].url;
-      it.logoFileName = it.logoFileName || logoByKey[k].file;
-      it.logoW = 0; it.logoH = 0; // trigger aspect-fit init
-      it.logoX = 0; it.logoY = 0;
+  async function assignProduct(idx, file){
+    await new Promise(res=>{
+      const r=new FileReader();
+      r.onload=async ev=>{
+        const cleaned = await removeWhiteBackground(ev.target.result);
+        setItemImage(idx, cleaned, file.name, true);
+        usedProdIdx.add(idx);
+        res();
+      };
+      r.readAsDataURL(file);
+    });
+  }
+
+  for(const f of files){
+    const fk = normalizeKey(f.name);
+    let bestLogo = {score:-1, idx:-1};
+    let bestProduct = {score:-1, idx:-1};
+
+    for(const it of itemKeys){
+      if(it.logoAssetKey){
+        const s = exactishScore(it.logoAssetKey, fk);
+        if(s > bestLogo.score) bestLogo = {score:s, idx:it.i};
+      }
+      if(!usedProdIdx.has(it.i) && it.productAssetKey){
+        const s = exactishScore(it.productAssetKey, fk);
+        if(s > bestProduct.score) bestProduct = {score:s, idx:it.i};
+      }
     }
-  });
+
+    
+    
+    // 僅當 logo key 與檔名「正規化後完全相同」才共用
+    const fkLogoKey = normalizeKey(f.name);
+    let matchedLogo = false;
+    for(const it of itemKeys){
+      if(it.logoAssetKey && it.logoAssetKey === fkLogoKey){
+        await assignLogo(it.i, f);
+        matchedLogo = true;
+      }
+    }
+
+    if(matchedLogo){
+      continue;
+    }
+
+    if(bestLogo.score >= 880 && bestLogo.score >= bestProduct.score){
+
+      await assignLogo(bestLogo.idx, f);
+      continue;
+    }
+
+    if(bestProduct.score >= 880){
+      await assignProduct(bestProduct.idx, f);
+      continue;
+    }
+
+    skipped.push(f.name);
+  }
 
   render();
   updateStatus('圖片已上傳');
-  let msg = '圖片已套用（可再手動更換/編輯）';
+  let msg = '圖片已依 N/O 素材欄配對';
   if(skipped.length){
-    msg += '\n有 '+skipped.length+' 張因「品名核對」不足而未自動套用（請手動指定）';
-    console.warn('Skipped by name check:', skipped);
-  }
-  if(skippedLogo.length){
-    msg += '\n有 '+skippedLogo.length+' 張 Logo 找不到對應檔名（請手動更換Logo）';
-    console.warn('Skipped logos:', skippedLogo);
+    msg += '\n有 '+skipped.length+' 張未命中素材檔名，請手動指定';
+    console.warn('Skipped by asset match:', skipped);
   }
   showToast(msg,'ok',2400);
   imgInput.value='';
@@ -1275,122 +1266,125 @@ sheetInput.addEventListener('change', async e=>{
       return s;
     }
 
-    // 尋找 MSBN2（嚴格版：只在 MS!F34:F41 找）
+    // 尋找 MSBN 2 / MSBN 3：必須同列 G 欄為「本期必換商品(類標) (系統帶)」
     const range = XLSX.utils.decode_range(ws['!ref']);
     range.s.c = 0; range.s.r = 0;
 
-    const KEY = 'msbn2';
-    let anchorRow = -1;
     const anchorCol = 5; // F 欄（0-based）
+    const labelCol  = 6; // G 欄（0-based）
+    const LEFT_TEXT_COL = 6;   // G
+    const RIGHT_TEXT_COL = 11; // L
+    const LEFT_ASSET_COL = 13; // N
+    const RIGHT_ASSET_COL = 14; // O
 
-    // Excel F34:F41 => 0-based row 33..40
-    for(let r=33; r<=40; r++){
-      if(r > range.e.r) break;
-      const v = getCellValue(r, anchorCol);
-      const k = normalizeKey(v);
-      if(k === KEY){
+    let anchorRow = -1;
+    const labelNeedle = normalizeKey('本期必換商品(類標) (系統帶)');
+
+    // 實際工單常見排法：
+    // 類標在上方一列或數列，MSBN 2 / MSBN 3 在下面。
+    // 因此不要要求同一列同時成立，而是：
+    // 1) 先找 F 欄的 MSBN 2 / MSBN 3
+    // 2) 再往上回找最近的「本期必換商品(類標) (系統帶)」
+    for(let r=range.s.r; r<=range.e.r; r++){
+      const fKey = normalizeKey(getCellValue(r, anchorCol));
+      if(fKey !== 'msbn2' && fKey !== 'msbn3') continue;
+
+      let foundLabel = false;
+      for(let rr=r-1; rr>=Math.max(range.s.r, r-8); rr--){
+        const gKey = normalizeKey(getCellValue(rr, labelCol));
+        if(gKey === labelNeedle){
+          foundLabel = true;
+          break;
+        }
+      }
+
+      if(foundLabel){
         anchorRow = r;
         break;
       }
     }
 
-// ====== MS 模式：從 anchorRow 右邊區塊取資料（預設 G~J，且以 4 欄一排） ======
-        function tryParseMS(){
-          if(anchorRow < 0) return null;
+    function coreNameOf(s){
+      const t = String(s||'').trim();
+      if(!t) return '';
+      const parts = t.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+      return parts.length ? parts[parts.length-1] : t;
+    }
 
-          const startCol = 6; // 嚴格版固定從 G 欄開始（0-based col=6）
-          const HARD_END_COL = 11; // 嚴格版只讀到 L 欄（0-based col=11）
-          const MAX_SCAN = 20;           // 最多往右掃描欄數（避免無限掃）
-          const MAX_ITEMS = 30; // 最多抓 30 個單位（每單位 2 行）
-          const ITEMS_PER_ROW = 2;       // 一排最多 2 個單位（左/右）
+    function tryParseMS(){
+  if(anchorRow < 0) return null;
 
-          // 找出「本區塊」實際使用到的最右欄（只看 2 行：Logo檔名 / 品名，支援合併）
-          let lastNonEmpty = -1;
-          for(let c=startCol; c<=Math.min(range.e.c, HARD_END_COL); c++){
-            const v1 = getCellValue(anchorRow,   c);   // row r   : Logo檔名
-            const v2 = getCellValue(anchorRow+1, c);   // row r+1 : 品名（同時做為曝品檔名對應）
-            if(String(v1||'').trim() !== '' || String(v2||'').trim() !== ''){
-              lastNonEmpty = c;
-            }
-          }
-          const endCol = Math.min(HARD_END_COL, (lastNonEmpty >= 0) ? lastNonEmpty : HARD_END_COL);
+  const parsed = [];
+  const MAX_ITEMS = 30;
 
-          // 取得「某列某欄」所屬的合併範圍（橫向）
-          function getHMergeRange(r, c){
-            for(const mg of merges){
-              if(r>=mg.s.r && r<=mg.e.r && c>=mg.s.c && c<=mg.e.c){
-                return {s: mg.s.c, e: mg.e.c};
-              }
-            }
-            return {s:c, e:c};
-          }
+  // 文案列從 anchorRow 本列開始
+  let r = anchorRow;
 
-          // 取「核心品名」：去掉空白、換行拆段後取最後一段（避免前面有活動字樣）
-          function coreNameOf(s){
-            const t = String(s||'').trim();
-            if(!t) return '';
-            const parts = t.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
-            return parts.length ? parts[parts.length-1] : t;
-          }
+  while(parsed.length < MAX_ITEMS && r <= range.e.r){
 
-          const parsed = [];
-          let r = anchorRow;
+    const leftText = String(getCellValue(r, LEFT_TEXT_COL) || '').trim();
+    const rightText = String(getCellValue(r, RIGHT_TEXT_COL) || '').trim();
 
-          // 每個單位只吃兩行資訊：
-          // row r   : Logo檔名（用來對 Logo 圖）
-          // row r+1 : 品名（顯示 + 同時做為曝品檔名的對應）
-          //
-          // 往右找：有值就是一個單位；若右邊空白，表示該排只有單一格（前端置中）
-          // 往下找：下一排從 r += 2 開始
-          while(parsed.length < MAX_ITEMS && (r+1) <= range.e.r){
-            let c = startCol;
+    // logo 在上一列
+    const leftLogoAsset = sanitizeAssetName(getCellValue(r-1, LEFT_ASSET_COL));
+    const rightLogoAsset = sanitizeAssetName(getCellValue(r-1, RIGHT_ASSET_COL));
 
-            const slotIdx = [null, null];
+    // 商品圖在本列
+    const leftProductAsset = sanitizeAssetName(getCellValue(r, LEFT_ASSET_COL));
+    const rightProductAsset = sanitizeAssetName(getCellValue(r, RIGHT_ASSET_COL));
 
-            for(let slot=0; slot<ITEMS_PER_ROW && parsed.length < MAX_ITEMS; slot++){
-              if(c > endCol) break;
+    const isLabel = /類標|系統帶/.test(leftText) || /類標|系統帶/.test(rightText);
+    if(isLabel) break;
 
-              const rg = getHMergeRange(r, c);
+    const leftValid = !!(leftText || leftLogoAsset || leftProductAsset);
+    const rightValid = !!(rightText || rightLogoAsset || rightProductAsset);
 
-              const logoV = getCellValue(r,   rg.s);
-              const nameV = getCellValue(r+1, rg.s);
+    if(!leftValid && !rightValid) break;
 
-              const logoS = String(logoV||'').trim();
-              const nameS = String(nameV||'').trim();
+    let leftIdx = null;
+    let rightIdx = null;
 
-              if(logoS || nameS){
-                const core = coreNameOf(nameS);
-                parsed.push({
-                  date: '',               // 已取消日期
-                  name: nameS,            // 顯示品名
-                  coreName: core,         // 品名核心
-                  matchKey: core,         // 用來對「曝品圖檔名」
-                  prizeKey: '',
-                  logoKey: logoS,         // 用來對「Logo圖檔名」
-                  single: false
-                });
-                slotIdx[slot] = parsed.length - 1;
-              }
+    if(leftValid){
+      const core = coreNameOf(leftText);
+      parsed.push({
+        date:'',
+        name:leftText,
+        coreName:core,
+        matchKey:leftProductAsset || core,
+        prizeKey:leftProductAsset || '',
+        logoKey:leftLogoAsset || '',
+        logoAssetName:leftLogoAsset || '',
+        productAssetName:leftProductAsset || '',
+        single:false
+      });
+      leftIdx = parsed.length-1;
+    }
 
-              c = rg.e + 1;
-            }
+    if(rightValid && parsed.length < MAX_ITEMS){
+      const core = coreNameOf(rightText);
+      parsed.push({
+        date:'',
+        name:rightText,
+        coreName:core,
+        matchKey:rightProductAsset || core,
+        prizeKey:rightProductAsset || '',
+        logoKey:rightLogoAsset || '',
+        logoAssetName:rightLogoAsset || '',
+        productAssetName:rightProductAsset || '',
+        single:false
+      });
+      rightIdx = parsed.length-1;
+    }
 
-            const anyInThisRow = (slotIdx[0] !== null) || (slotIdx[1] !== null);
-            if(!anyInThisRow) break;
+    if(leftIdx !== null && rightIdx === null) parsed[leftIdx].single = true;
+    if(leftIdx === null && rightIdx !== null) parsed[rightIdx].single = true;
 
-            // 若同一排只有左邊或只有右邊有資料：該格要「單一格置中」
-            if(slotIdx[0] !== null && slotIdx[1] === null){
-              parsed[slotIdx[0]].single = true;
-            }else if(slotIdx[0] === null && slotIdx[1] !== null){
-              parsed[slotIdx[1]].single = true;
-            }
+    // 每組 +2 列
+    r += 2;
+  }
 
-            r += 2; // 下一排（每單位 2 行）
-          }
-
-          return parsed.length ? parsed : null;
-        }
-
+  return parsed.length ? parsed : null;
+}
 
     let parsed = tryParseMS();
 
@@ -1409,6 +1403,8 @@ sheetInput.addEventListener('change', async e=>{
       matchKey: p.matchKey || '',
       prizeKey: p.prizeKey || '',
       logoKey: p.logoKey || '',
+      logoAssetName: p.logoAssetName || '',
+      productAssetName: p.productAssetName || '',
       imageDataURL:'',
       logoDataURL:'',
       x:0,y:0,width:0,height:0,
@@ -1439,7 +1435,7 @@ btnDownloadTemp.addEventListener('click', ()=>{
   const payload = [];
   items.forEach((it,i)=>{
     const card = boardInner.querySelector(`.card[data-index="${i}"]`);
-    const img = card ? card.querySelector('.circle img') : null;
+    const img = card ? card.querySelector('img.product-img') : null;
     const dataURL = img ? img.src : (it.imageDataURL||'');
     const x = img ? Number(img.dataset.left||0) : (it.x||0);
     const y = img ? Number(img.dataset.top||0)  : (it.y||0);
@@ -1464,6 +1460,8 @@ btnDownloadTemp.addEventListener('click', ()=>{
       logoDataURL,
       logoX, logoY, logoW, logoH,
       logoFileName: it.logoFileName||'',
+      logoAssetName: it.logoAssetName||'',
+      productAssetName: it.productAssetName||'',
       single: !!it.single
     });
   });
@@ -1506,6 +1504,8 @@ tempInput.addEventListener('change', e=>{
         logoW: Number.isFinite(it.logoW) ? it.logoW : 0,
         logoH: Number.isFinite(it.logoH) ? it.logoH : 0,
         logoFileName: it.logoFileName || '',
+        logoAssetName: it.logoAssetName || '',
+        productAssetName: it.productAssetName || '',
         single: !!(it.single ?? it.isSingle)
       }));
       render();
