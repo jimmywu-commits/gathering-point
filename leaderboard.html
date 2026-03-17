@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>蝦拼集點換好禮 BN v2</title>
+<title>蝦拼集點換好禮 BN v1</title>
 <style>
 @font-face{
   font-family:'ShopeeNotoSansRegular';
@@ -50,21 +50,70 @@ body{margin:0;background:#f2f2f2;padding:20px;display:flex;flex-direction:column
   overflow:visible;
 }
 .board-inner{
+  --card-w: 160px;
+  --col-gap: 7px;
+
   position:absolute; inset:0;
   padding:56px 42px 29px 42px; /* derived from reference */
   box-sizing:border-box;
   display:grid;
-  column-gap:7px;
+  column-gap:var(--col-gap);
   row-gap:47px;
   align-content:start;
 }
 /* default 3 columns; JS will switch to 2 when needed */
-.board-inner.cols-3{grid-template-columns:repeat(3,160px);}
-.board-inner.cols-2{grid-template-columns:repeat(2,160px); justify-content:center; column-gap:14px;}
+.board-inner.cols-3{
+  --card-w: 160px;
+  --col-gap: 7px;
+  grid-template-columns:repeat(3, var(--card-w));
+}
+.board-inner.cols-2{
+  --col-gap: 14px;
+  --card-w: 240px;
+  grid-template-columns:repeat(2, var(--card-w));
+  justify-content:center;
+}
+
+.board-inner.cols-2 .date-pill{
+  left:20px;
+  right:20px;
+  height:53px;
+  top:-34px;
+}
+
+.board-inner.cols-2 .circle{
+  left:50%;
+  transform:translateX(-50%);
+  top:48px;
+  width:130px;
+  height:130px;
+}
+
+.board-inner.cols-2 .ribbon-bg{
+  width:140px;
+  height:54px;
+  left:50%;
+  right:auto;
+  transform:translateX(-50%);
+  bottom:30px;
+}
+
+.board-inner.cols-2 .ribbon{
+  width:140px;
+  left:50%;
+  right:auto;
+  transform:translateX(-50%);
+  bottom:34px;
+  min-height:52px;
+}
 
 /* ===== Card ===== */
-.card{width:160px;height:234px;position:relative;
-  z-index:1;}
+.card{
+  width:var(--card-w);
+  height:234px;
+  position:relative;
+  z-index:1;
+}
 .card-bg{
   position:absolute; inset:0;
   background:#ffdf7f;
@@ -73,8 +122,11 @@ body{margin:0;background:#f2f2f2;padding:20px;display:flex;flex-direction:column
 .card-bg{z-index:0;}
 .date-pill{
   position:absolute;
-  top:-34px; left:14px;
-  width:133px; height:53px;
+  top:-34px;
+  left:14px;
+  right:14px;
+  width:auto;
+  height:53px;
   background:#143B76;
   border-radius:999px;
   display:flex; align-items:center; justify-content:center;
@@ -112,22 +164,17 @@ body{margin:0;background:#f2f2f2;padding:20px;display:flex;flex-direction:column
 /* ===== Ribbon (image as separate layer, v38) ===== */
 .ribbon-bg{
   position:absolute;
-  left:20px; right:20px;
+  left:20px;
+  right:20px;
   bottom:30px;
-  /* 不限制在 ribbon 文字框內：圖片本身維持原尺寸，不縮放 */
-  width:auto;
   height:auto;
   pointer-events:none;
   z-index:2; /* above card-bg */
-  display:flex;
-  justify-content:center;
 }
 .ribbon-bg img{
+  width:140px;
+  height:54px;
   display:block;
-  width:auto;
-  height:auto;
-  max-width:none;
-  max-height:none;
 }
 .ribbon{
   position:absolute;
@@ -324,17 +371,74 @@ function convertCnNums(str){
 /* ========= Render ========= */
 function ensureDefaultItems(){
   if(items.length) return;
-  // 6 placeholders
-  items = Array.from({length:6}, (_,i)=>({date:'', name:'', matchKey:'', imageDataURL:'', x:0,y:0,width:0,height:0, fileName:''}));
+  // 預設介面顯示 4 格
+  items = Array.from({length:4}, (_,i)=>({date:'', name:'', matchKey:'', imageDataURL:'', x:0,y:0,width:0,height:0, fileName:''}));
 }
 ensureDefaultItems();
 render();
 
-function computeCols(n){
-  return (n===4) ? 2 : 3;
+
+  function splitLines(v){
+    return String(v || '')
+      .replace(/\r/g, '')
+      .split('\n')
+      .map(s => s.trim())
+      .filter(Boolean);
+  }
+
+  function splitImageKeys(v){
+    const s = String(v || '').replace(/\r/g, '').trim();
+    if(!s) return [];
+
+    const byLine = s.split('\n').map(x => x.trim()).filter(Boolean);
+    if(byLine.length > 1) return byLine;
+
+    // 單一儲存格內可直接連寫多個檔名，靠副檔名切開
+    const extPattern = /.+?\.(?:png|jpe?g|webp|gif|bmp|svg)/ig;
+    const matches = s.match(extPattern);
+    if(matches && matches.length){
+      return matches.map(x => x.trim()).filter(Boolean);
+    }
+    return [s];
+  }
+
+  function parseLeaderboardItemsFromIJ(settingsRow){
+    const iLines = splitLines(settingsRow[8]); // I欄：日期 + 顯示文字
+    const jLines = splitImageKeys(settingsRow[9]); // J欄：圖檔名稱 / 對圖 key
+
+    return iLines.slice(0, 6).map((line, idx) => {
+      const m = line.match(/^(\d{1,2}\/\d{1,2})(?:\s+|$)(.*)$/);
+      const date = m ? (m[1] || '').trim() : '';
+      const title = m ? (m[2] || '').trim() : line.trim();
+      const matchKey = (jLines[idx] || title || '').trim();
+      return { date, title, matchKey };
+    });
+  }
+
+function computeCols(){
+  return 2;
+}
+
+
+function updateBoardHeight(){
+  const rowsCount = Math.ceil(Math.max(items.length, 4) / 2); // 預設介面 4 格
+  const paddingTop = 56;
+  const paddingBottom = 29;
+  const cardH = 234;
+  const rowGap = 47;
+  const contentHeight =
+    paddingTop +
+    (rowsCount * cardH) +
+    ((rowsCount - 1) * rowGap) +
+    paddingBottom;
+  const finalH = Math.max(600, contentHeight);
+
+  const board = document.querySelector('.board');
+  if(board) board.style.height = finalH + 'px';
 }
 
 function render(){
+  updateBoardHeight();
   const n = items.length;
   const cols = computeCols(n);
   boardInner.classList.toggle('cols-2', cols===2);
@@ -473,6 +577,31 @@ function applyImgStyle(img, left, top, w, h){
   img.style.cursor='ew-resize';
 }
 
+
+// default image scale 1.5
+function applyDefaultScale(it){
+  if(it.width && it.height){
+    it.width = it.width ;
+    it.height = it.height ;
+  }
+}
+
+
+// scale image to 120% of circle (130px → 156px)
+function applyCircleScale120(it, img){
+  const target = 130 * 1.2; // 156px
+  if(img && img.naturalWidth && img.naturalHeight){
+    const ratio = img.naturalWidth / img.naturalHeight;
+    if(ratio >= 1){
+      it.width = target;
+      it.height = target / ratio;
+    }else{
+      it.height = target;
+      it.width = target * ratio;
+    }
+  }
+}
+
 function setItemImage(idx, dataURL, fileName, autoFit){
   const it = items[idx];
   it.imageDataURL = dataURL;
@@ -569,51 +698,60 @@ imgInput.addEventListener('change', async e=>{
   updateStatus('上傳圖片中('+files.length+'張)');
   files.sort((a,b)=> (a.webkitRelativePath||a.name).localeCompare(b.webkitRelativePath||b.name));
 
-  // build candidate name keys
-    const itemKeys = items.map((it,i)=>({
+  // build exact filename keys (1:1)
+  const itemKeys = items.map((it,i)=>({
     i,
-    // v23: 以 J欄對應檔名為優先比對依據（可能含日期前綴）
-    matchKey: normalizeKey(it.matchKey||''),
-    nameKey: normalizeKey(it.name||'')
+    matchKeyRaw: String(it.matchKey || '').trim(),
+    nameKeyRaw: String(it.name || '').trim()
   }));
 
-  // match each file to best item by overlap score
+  const unmatchedFiles = [];
+
+  // 1:1 嚴格對圖：先比 J 欄完整檔名，完全一致才套用
   for(const f of files){
-    const fk = normalizeKey(f.name);
-    let best = {score: -1, idx: -1};
+    const fkRaw = String(f.name || '').trim();
+    let targetIdx = -1;
 
     for(const it of itemKeys){
-      const mk = it.matchKey;
-      if(mk){
-        // 部分比對：任一方包含另一方
-        const hit = (fk.includes(mk) || mk.includes(fk));
-        if(hit){
-          const score = Math.min(fk.length, mk.length); // longer match wins
-          if(score > best.score) best = {score, idx: it.i};
-          continue;
-        }
-        // 次要：用 overlapScore 做寬鬆比對（避免 J 欄含日期前綴）
-        const score2 = overlapScore(mk, fk);
-        if(score2 > best.score) best = {score: score2, idx: it.i};
-      }else if(it.nameKey){
-        const score3 = overlapScore(it.nameKey, fk);
-        if(score3 > best.score) best = {score: score3, idx: it.i};
+      const mkRaw = String(it.matchKeyRaw || '').trim();
+      if(mkRaw && fkRaw === mkRaw){
+        targetIdx = it.i;
+        break;
       }
     }
 
-    // if no good match, put into first empty slot
-    let targetIdx = (best.score>=2) ? best.idx : items.findIndex(x=>!x.imageDataURL);
+    // 若 J 欄空白，才允許用商品名完整相等
+    if(targetIdx < 0){
+      for(const it of itemKeys){
+        const mkRaw = String(it.matchKeyRaw || '').trim();
+        const nkRaw = String(it.nameKeyRaw || '').trim();
+        if(!mkRaw && nkRaw && fkRaw === nkRaw){
+          targetIdx = it.i;
+          break;
+        }
+      }
+    }
 
-    if(targetIdx < 0) targetIdx = 0;
+    // 找不到就先記下，不自動亂塞
+    if(targetIdx < 0){
+      unmatchedFiles.push(f.name);
+      continue;
+    }
 
     await new Promise(res=>{
       const r=new FileReader();
-      r.onload=async ev=>{ const cleaned = await removeWhiteBackground(ev.target.result); setItemImage(targetIdx, cleaned, f.name, true); res(); };
+      r.onload=async ev=>{ const cleaned = await removeWhiteBackground(ev.target.result); setItemImage(targetIdx, cleaned, f.name, true);
+      const img = new Image(); img.onload = ()=>applyCircleScale120(items[targetIdx], img); img.src = cleaned; res(); };
       r.readAsDataURL(f);
     });
   }
+
   updateStatus('圖片已上傳');
-  showToast('圖片已套用（可再手動更換/編輯）','ok',1800);
+  if(unmatchedFiles.length){
+    showToast('有圖片未套用：' + unmatchedFiles.join('、'), 'err', 3200);
+  }else{
+    showToast('圖片已按 J 欄完整檔名 1:1 套用','ok',1800);
+  }
   imgInput.value='';
 });
 
@@ -654,32 +792,32 @@ sheetInput.addEventListener('change', async e=>{
 //      I欄(第9欄)每個斷行代表一個品項（日期+品名），
 //      J欄(第10欄)每個斷行代表該品項對應圖片檔名（可能含日期前綴，做部分比對）
     let targetRow = null;
-    for(const r of rows){
+    let targetRowIndex = -1;
+    for(let idx=0; idx<rows.length; idx++){
+      const r = rows[idx];
       const cRaw = (r[2]||'').toString();
       const cNorm = cRaw.toLowerCase().replace(/\s+/g,' ').trim();
       const target = 'leaderboard settings (1)';
       const target2 = 'leaderboard settings(1)';
       if(cNorm === target || cNorm === target2 || cNorm.includes(target) || cNorm.includes(target2)){
         targetRow = r;
+        targetRowIndex = idx;
         break;
       }
     }
 
-    if(!targetRow){
+    if(!targetRow || targetRowIndex < 0){
       showToast('找不到 C欄含 Leaderboard Settings (1) 的那一行','err',2600);
       updateStatus('就緒');
       return;
     }
 
-    const iCell = (targetRow[8]||'').toString(); // I 欄
-    const jCell = (targetRow[9]||'').toString(); // J 欄（對應圖片檔名依據）
-
+    const iCell = (targetRow[8]||'').toString(); // I 欄：日期 + 顯示文字（同一格內換行）
     const iLines = iCell.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-    const jLines = jCell.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
 
-    const n = Math.min(6, Math.max(iLines.length, jLines.length)); // 最多 6 格版型
+    const n = Math.min(6, iLines.length); // 最多 6 格版型
     if(n === 0){
-      showToast('I/J 欄沒有可用的品項（斷行）','err',2600);
+      showToast('I 欄沒有可用的品項（斷行）','err',2600);
       updateStatus('就緒');
       return;
     }
@@ -699,7 +837,9 @@ sheetInput.addEventListener('change', async e=>{
       // v43: 工單匯入時，將中文數字 一二三四五六七八九十 轉成阿拉伯數字（排除「三星」「百年」）
       name = convertCnNums(name);
 
-      let matchKey = jLines[k] || ''; // 用於比對圖片檔名（可含日期前綴）
+      // J 欄改為往下吃：J36、J37、J38、J39...
+      const jRow = rows[targetRowIndex + k] || [];
+      let matchKey = (jRow[9] || '').toString().trim();
       matchKey = convertCnNums(matchKey);
       parsed.push({date, name, matchKey});
     }
@@ -834,9 +974,18 @@ btnDownloadPNG.addEventListener('click', async ()=>{
   try{
     await ensureFontLoaded();
     const canvas = document.createElement('canvas');
-    canvas.width=578; canvas.height=600;
+    canvas.width = 578;
+// auto height: 2 rows = 600, 3 rows expand
+const rowsCount = Math.ceil(items.length / 2);
+const contentHeight =
+  paddingTop +
+  (rowsCount * cardH) +
+  ((rowsCount - 1) * rowGap) +
+  paddingBottom;
+
+canvas.height = Math.max(600, contentHeight);
     const ctx = canvas.getContext('2d');
-    ctx.clearRect(0,0,578,600);
+    ctx.clearRect(0,0,canvas.width,canvas.height);
 
     // rounded bg
     roundRect(ctx, 0,0,578,600,44);
@@ -844,10 +993,9 @@ btnDownloadPNG.addEventListener('click', async ()=>{
     ctx.fill();
 
     // layout params (match CSS)
-    const paddingLeft=42, paddingTop=56, colGap = (computeCols(items.length)===2?14:7), rowGap=47;
-    const cardW=160, cardH=234;
-
-    const cols = computeCols(items.length);
+    const paddingLeft=42, paddingTop=56, colGap = (2===2?14:7), rowGap=47;
+    const cols = 2;
+    const cardW = (cols===2 ? 240 : 160), cardH=234;
     const rows = Math.ceil(items.length / cols);
     const totalW = cols*cardW + (cols-1)*colGap;
     let startX = paddingLeft;
@@ -869,18 +1017,18 @@ btnDownloadPNG.addEventListener('click', async ()=>{
       ctx.fill();
 
       // date pill
-      roundRect(ctx, x+14, y-34, 133, 53, 999);
+      roundRect(ctx, x + (cols===2 ? 20 : 14), y-34, (cols===2 ? 200 : 133), 53, 999);
       ctx.fillStyle = '#1c387c';
       ctx.fill();
       ctx.fillStyle='#fff';
       ctx.font='500 30px ShopeeNotoSansMedium, system-ui, -apple-system, "Segoe UI", Arial';
       ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.fillText(it.date||'', x+14+133/2, y-34+53/2+1);
+      ctx.fillText(it.date||'', x + cardW/2, y-34 + (53/2) + 1);
 
       // orange circle
       ctx.save();
       ctx.beginPath();
-      ctx.arc(x+15+65, y+54+65, 65, 0, Math.PI*2);
+      ctx.arc(x + cardW/2, y+54+65, 65, 0, Math.PI*2);
       ctx.closePath();
       ctx.fillStyle = '#FF6B4A';
       ctx.fill();
@@ -889,7 +1037,7 @@ btnDownloadPNG.addEventListener('click', async ()=>{
       if(it.imageDataURL){
         const img = await loadImage(it.imageDataURL);
         // draw image using stored geometry relative to MASK
-        const dx = x+15 + (it.x||0);
+        const dx = x + cardW/2 - 65 + (it.x||0);
         const dy = y+54 + (it.y||0);
         const dw = it.width || img.naturalWidth;
         const dh = it.height || img.naturalHeight;
@@ -1333,6 +1481,18 @@ document.getElementById('nudgeClose').addEventListener('click', ()=>{
 document.getElementById('nudgeImg').addEventListener('click', ()=>{
   window.open('https://www.photoroom.com/tools/background-remover','_blank');
 });
+
+window.__leaderboardFieldRule = {
+  rowMatch: "C欄包含 Leaderboard Settings (1)",
+  dateAndTextFrom: "I欄",
+  imageMatchKeyFrom: "J欄"
+};
+
 </script>
+
+<div style="position:fixed;left:12px;bottom:12px;background:#111;color:#fff;font-size:12px;padding:8px 10px;border-radius:8px;z-index:99999;opacity:.9">
+  工單規則：I欄＝日期＋文字（同一格內每行一筆）｜J欄＝圖檔名稱（從設定列開始往下逐列讀取，如 J36、J37、J38、J39）｜圖片對應＝J欄完整檔名 1:1 完全相等｜畫面高度＝最小 600，依排數自動增加
+</div>
+
 </body>
 </html>
